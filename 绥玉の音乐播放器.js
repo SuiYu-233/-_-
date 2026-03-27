@@ -3,10 +3,7 @@
 // @namespace    http://tampermonkey.net/
 // @version      1.0.0
 // @description  在 SillyTavern 中注入双岛音乐播放器
-// @match        http://localhost:*/*
-// @match        http://127.0.0.1:*/*
-// @match        https://localhost:*/*
-// @match        https://127.0.0.1:*/*
+// @match *://*/*
 // @run-at       document-idle
 // @grant        none
 // ==/UserScript==
