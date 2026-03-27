@@ -9,7 +9,134 @@
 // ==/UserScript==
 
 (function () {
-‘use strict’;
+    'use strict';
+    
+    // ====== 【START 调试模块 - 由助手添加】 ======
+    console.log('🔍 [播放器调试] 脚本启动');
+    
+    // 1. 检查并强制显示
+    function debugPlayer() {
+        // 等待页面主体加载
+        if (!document.body) {
+            setTimeout(debugPlayer, 100);
+            return;
+        }
+        
+        // 检查是否已存在播放器元素
+        const existingPlayer = document.querySelector('.di-root, .di-player, .di-list');
+        if (existingPlayer) {
+            alert('✅ 调试：发现已存在的播放器元素！将尝试强制显示。');
+            
+            // 创建强制显示样式
+            const forceStyle = document.createElement('style');
+            forceStyle.id = 'debug-force-style';
+            forceStyle.textContent = `
+                .di-root {
+                    display: flex !important;
+                    opacity: 1 !important;
+                    visibility: visible !important;
+                    background: rgba(255, 0, 0, 0.3) !important;
+                    border: 3px solid yellow !important;
+                    z-index: 2147483647 !important;
+                }
+                .di-player, .di-list {
+                    opacity: 1 !important;
+                    backdrop-filter: none !important;
+                }
+            `;
+            document.head.appendChild(forceStyle);
+            
+            // 将播放器移动到body末尾，避免被父元素隐藏
+            document.body.appendChild(existingPlayer);
+            
+            alert('🎯 调试：已强制注入显示样式。请查看页面顶部中央是否有半红边框区域。');
+            
+        } else {
+            alert('❌ 调试：未找到任何播放器元素 (.di-root, .di-player, .di-list)。\n\n可能原因：\n1. 播放器HTML未被成功创建\n2. 类名不匹配\n3. 脚本执行出错中断');
+            
+            // 创建一个测试元素，确认基本功能正常
+            const testDiv = document.createElement('div');
+            testDiv.innerHTML = '🔧 播放器调试测试';
+            testDiv.style.cssText = 'position:fixed; top:20px; right:20px; background:green; color:white; padding:15px; z-index:999999; font-size:16px;';
+            document.body.appendChild(testDiv);
+        }
+    }
+    
+    // 2. 修改原CSS，确保基础样式正确
+    // 这个函数会在原CSS注入后运行，增强它
+    function enhanceOriginalCSS() {
+        const originalStyles = document.querySelectorAll('style');
+        let found = false;
+        
+        originalStyles.forEach(style => {
+            if (style.textContent.includes('.di-root') || style.textContent.includes('di-player')) {
+                found = true;
+                // 在原CSS中追加保障规则
+                style.textContent += '\n\n/* === 调试保障追加样式 === */\n';
+                style.textContent += '.di-root { display: flex !important; opacity: 1 !important; }\n';
+                style.textContent += '.di-player, .di-list { opacity: 1 !important; }\n';
+            }
+        });
+        
+        if (!found) {
+            // 如果没找到原样式，直接注入一个基础版
+            const baseStyle = document.createElement('style');
+            baseStyle.textContent = `
+                .di-root { 
+                    position: fixed !important; 
+                    top: 10px !important; 
+                    left: 50% !important; 
+                    transform: translateX(-50%) !important; 
+                    z-index: 2147483647 !important; 
+                    display: flex !important; 
+                    flex-direction: column !important;
+                }
+                .di-player, .di-list {
+                    background: rgba(0, 0, 0, 0.8) !important;
+                    backdrop-filter: blur(10px) !important;
+                    border-radius: 12px !important;
+                    padding: 12px !important;
+                    color: white !important;
+                }
+            `;
+            document.head.appendChild(baseStyle);
+        }
+    }
+    
+    // 3. 监听DOM变化，捕捉可能被动态移除的元素
+    const domObserver = new MutationObserver((mutations) => {
+        mutations.forEach(mutation => {
+            mutation.removedNodes.forEach(node => {
+                if (node.nodeType === 1 && (node.matches?.('.di-root, .di-player, .di-list') || 
+                    node.querySelector?.('.di-root, .di-player, .di-list'))) {
+                    console.warn('⚠️ 播放器元素被移除了！', node);
+                    alert('⚠️ 警告：检测到播放器元素被从页面移除！\n可能是页面脚本冲突。');
+                }
+            });
+        });
+    });
+    
+    // 4. 初始化调试流程
+    setTimeout(() => {
+        debugPlayer();
+        enhanceOriginalCSS();
+        
+        if (document.body) {
+            domObserver.observe(document.body, { childList: true, subtree: true });
+        }
+        
+        // 5秒后最终检查
+        setTimeout(() => {
+            const finalCheck = document.querySelector('.di-root');
+            if (!finalCheck) {
+                alert('⏱️ 最终检查：5秒后仍未找到播放器元素。\n请提供以下信息：\n1. 页面是否有其他错误提示\n2. 是否使用了其他用户脚本\n3. 网络连接状态');
+            } else {
+                alert('🎉 调试完成！播放器元素已确认存在。\n如果仍看不见，是视觉样式问题。');
+            }
+        }, 5000);
+    }, 1000); // 延迟1秒开始，让原脚本先运行
+    // ====== 【END 调试模块】 ======
+    
 
 /* ── 曲目 ── */
 const TRACKS = [
