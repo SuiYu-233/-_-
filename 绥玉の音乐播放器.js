@@ -4,9 +4,7 @@
 // @version      1.1.0
 // @description  在 SillyTavern 中注入双岛音乐播放器 - 已修复语法与链接
 // @namespace    https://github.com/SuiYu-233
-// @match        http://localhost:*/*
-// @match        http://127.0.0.1:*/*
-// @match        *://*.sillytavern.*/*
+// @match        *://*/*
 // @run-at       document-idle
 // @grant        none
 // ==/UserScript==
