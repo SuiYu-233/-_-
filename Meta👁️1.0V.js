@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         ST 侧边小剧场
+// @name         绥玉のmeta小剧场
 // @namespace    st-theater
 // @version      9.9
 // @match        *://localhost:8000/*
@@ -40,21 +40,22 @@ settingsPanelWidth: 268, settingsPanelAutoH: true, settingsPanelHeight: null,
 reviewPanelWidth: 248, reviewPanelAutoH: false, reviewPanelHeight: 400,
 chatPanelWidth: 375, chatPanelAutoH: true, chatPanelHeight: null,
 fontScale: 1, customFontUrl: "", customCSS: "", performanceMode: false,
-timeAware: true, summaryPrompt: "请按照以下格式，为我总结从[起始时间]到[结束时间]的完整剧情：
-**格式要求**：
+timeAware: true, summaryPrompt: `请按照以下格式，为我总结从剧情起始时间（或者上次剧情总结结束时间）到目前剧情结束时间的完整剧情。
+
+格式要求：
 1. 按时间线（如XXXX年X月X日X时X分，同年/月部分只注释区别的时间。例如上文已经总结2026年，没有年份变化只需要记X月X日X时X分，年份可以省去，月份同理）分章节组织
 2. 每个时间按24小时制细分
-3. **重要对话必须完整保留原文**，使用引用格式（> 角色："对话内容"）
+3. 重要对话必须完整保留原文，使用引用格式（> 角色："原话"）
 4. 不重要的过渡情节用2-3句话概括即可
 5. 关键场景需标注【关键场景】
 
-**判断"重要对话"的标准**：
+判断重要对话的标准：
 - 涉及角色核心性格/动机的表达
 - 影响后续剧情走向的决策
 - 建立或改变角色关系的互动
 - 包含关键信息/秘密的揭露
-**目的**：生成一份可供后续对话参考的"剧情档案"，确保角色不会失忆，剧情线索不会丢失。
-",
+
+目的：生成一份可供后续对话参考的"剧情档案"，确保角色不会失忆，剧情线索不会丢失。`,
 };
 let memoryData  = { entries: [] };
 let chatLogs    = {};
