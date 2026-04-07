@@ -1481,7 +1481,7 @@ const dot=av.querySelector(".cht-online");av.innerHTML="";if(dot)av.appendChild(
 const avFb=D.createElement("span");avFb.className="cht-av-fb";avFb.style.cssText="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:15px;color:#fff;font-weight:500;pointer-events:none;border-radius:50%;";avFb.textContent=cn[0]||"？";av.appendChild(avFb);
 if(ch?.avatar&&ch.avatar!=="none"){loadAvatar(ch.avatar,img=>{av.querySelector(".cht-av-fb")?.remove();av.insertBefore(img,av.firstChild);},()=>{});}
 }catch(_){}
-posChatPanel();chatPanelEl.classList.add("stThtrVisible");chatBarEl.classList.add("stThtrBarOpen");
+refreshAvatar();posChatPanel();chatPanelEl.classList.add("stThtrVisible");chatBarEl.classList.add("stThtrBarOpen");
 const remarkEl2=D.getElementById("stChtRemark");
 if(remarkEl2){const r2=charRemarks[currentCharName]||{};remarkEl2.textContent=r2.note?"📝 "+r2.note.slice(0,18)+(r2.note.length>18?"...":""):"在线";}
 sChtScrollBottom();
@@ -1853,7 +1853,22 @@ let stFloorCount=0,miniChatCount=0,stReadCount=0;
 try{const c2=UW.window.parent.SillyTavern?.getContext();stFloorCount=(c2?.chat||[]).filter(m=>!m.is_system).length;const stHist=buildChatHistory(genSettings.historyDepth||10);stReadCount=stHist.length;}catch(_){}
 miniChatCount=getCurrentLog().length;const r=getCurRemark();
 const unitOpts=["min","hour","day"].map(u=>`<option value="${u}" ${r.intervalUnit===u?"selected":""}>${{min:"分钟",hour:"小时",day:"天"}[u]}</option>`).join("");
-floorPopup.innerHTML=` <div class="fd-sect" style="background:#f8f8f8;border-bottom:1px solid #f0f0f0;padding:10px 16px;"> <div style="display:flex;justify-content:space-between;align-items:center;font-size:10.5px;color:#bbb;letter-spacing:.04em;margin-bottom:2px;"><span>📚 ST 主线楼层</span><strong style="color:#444;font-size:12px">${stFloorCount} 楼（实际读取 ${stReadCount} 楼）</strong></div> <div style="display:flex;justify-content:space-between;align-items:center;font-size:10.5px;color:#bbb;letter-spacing:.04em;"><span>💬 私聊记录</span><strong style="color:#444;font-size:12px">${miniChatCount} 条</strong></div> </div> <div class="fd-sect"><div class="fd-label">📚 ST 主线楼层读取深度</div><div style="display:flex;align-items:center;gap:8px;margin-top:5px"><input class="fd-num" id="stChtSTDepth" type="number" min="0" max="500" value="${genSettings.historyDepth||10}" style="width:64px"><span style="font-size:11px;color:#999">楼（默认10）</span></div></div> <div class="fd-sect"><div class="fd-label">💬 私聊记录读取条数</div><div style="display:flex;align-items:center;gap:8px;margin-top:5px"><input class="fd-num" id="stChtHistDepth" type="number" min="1" max="500" value="${genSettings.chatHistoryDepth||100}" style="width:64px"><span style="font-size:11px;color:#999">条（默认100）</span></div></div> <div class="fd-sect"><div class="fd-label">备注 · 仅自己可见</div><textarea class="fd-remark" id="stChtRemarkTA" rows="3" placeholder="随手记点什么...">${escHtml(r.note||"")}</textarea></div> <div class="fd-sect"> <div class="fd-row"><div><div class="fd-row-label">让 TA 主动发消息</div><div class="fd-row-sub">按设定间隔自动生成一条</div></div><label class="fd-toggle"><input type="checkbox" id="stChtAutoToggle" ${r.autoMsg?"checked":""}><span class="fd-slider"></span></label></div> <div class="fd-interval ${r.autoMsg?"shown":""}" id="stChtIntervalRow">每隔<input class="fd-num" id="stChtIntervalVal" type="number" min="1" value="${r.intervalVal||1}"><select class="fd-unit" id="stChtIntervalUnit">${unitOpts}</select>发一次</div> </div> <div class="fd-sect"> <button class="fd-btn" id="stChtTriggerNow">⚡ 让 TA 现在发一条</button> <button class="fd-btn secondary" id="stChtRemarkSave">保存设置</button> </div> <div class="fd-sect" style="border-top:1px solid #f0f0f0;"> <div class="fd-label">📝 总结上提示词</div> <textarea class="fd-remark" id="stChtSummaryPrompt" rows="3" placeholder="填写总结提示词...">${escHtml(genSettings.summaryPrompt||"👽")}</textarea> <div class="fd-label" style="margin-top:8px;">总结结果 <span style="font-size:9px;color:#ccc;">（全部上下文）</span></div> <textarea class="fd-remark" id="stChtSummaryResult" rows="12" placeholder="点击「开始生成」后结果会显示在这里..." style="font-size:12px;color:#555;background:#fafafa;min-height:160px;"></textarea> <div style="display:flex;gap:6px;margin-top:8px;"> <button class="fd-btn" id="stChtSummaryGen" style="flex:2;padding:8px;">开始生成</button> <button class="fd-btn secondary" id="stChtSummaryCopy" style="flex:1;padding:8px;">一键复制</button> <button class="fd-btn secondary" id="stChtSummaryImport" style="flex:1.5;padding:8px;">导入世界书</button> </div> <div id="stChtSummaryStatus" style="font-size:11px;min-height:14px;margin-top:4px;color:#999;"></div> </div> <div class="fd-sect" style="border-top:1px solid #f0f0f0;"> <button class="fd-btn secondary" id="stChtClearBtn" style="color:#c04040;border-color:#f0c0c0;background:#fff5f5;">🗑 清空聊天记录</button> </div>`;
+floorPopup.innerHTML=` <div class="fd-sect" style="background:#f8f8f8;border-bottom:1px solid #f0f0f0;padding:10px 16px;"> <div style="display:flex;justify-content:space-between;align-items:center;font-size:10.5px;color:#bbb;letter-spacing:.04em;margin-bottom:2px;"><span>📚 ST 主线楼层</span><strong style="color:#444;font-size:12px">${stFloorCount} 楼（实际读取 ${stReadCount} 楼）</strong></div> <div style="display:flex;justify-content:space-between;align-items:center;font-size:10.5px;color:#bbb;letter-spacing:.04em;"><span>💬 私聊记录</span><strong style="color:#444;font-size:12px">${miniChatCount} 条</strong></div> </div> <div class="fd-sect"><div class="fd-label">📚 ST 主线楼层读取深度</div><div style="display:flex;align-items:center;gap:8px;margin-top:5px"><input class="fd-num" id="stChtSTDepth" type="number" min="0" max="500" value="${genSettings.historyDepth||10}" style="width:64px"><span style="font-size:11px;color:#999">楼（默认10）</span></div></div> <div class="fd-sect"><div class="fd-label">💬 私聊记录读取条数</div><div style="display:flex;align-items:center;gap:8px;margin-top:5px"><input class="fd-num" id="stChtHistDepth" type="number" min="1" max="500" value="${genSettings.chatHistoryDepth||100}" style="width:64px"><span style="font-size:11px;color:#999">条（默认100）</span></div></div> <div class="fd-sect"><div class="fd-label">备注 · 仅自己可见</div><textarea class="fd-remark" id="stChtRemarkTA" rows="3" placeholder="随手记点什么...">${escHtml(r.note||"")}</textarea></div> <div class="fd-sect"> <div class="fd-row"><div><div class="fd-row-label">让 TA 主动发消息</div><div class="fd-row-sub">按设定间隔自动生成一条</div></div><label class="fd-toggle"><input type="checkbox" id="stChtAutoToggle" ${r.autoMsg?"checked":""}><span class="fd-slider"></span></label></div> <div class="fd-interval ${r.autoMsg?"shown":""}" id="stChtIntervalRow">每隔<input class="fd-num" id="stChtIntervalVal" type="number" min="1" value="${r.intervalVal||1}"><select class="fd-unit" id="stChtIntervalUnit">${unitOpts}</select>发一次</div> </div> <div class="fd-sect"> <button class="fd-btn" id="stChtTriggerNow">⚡ 让 TA 现在发一条</button> <button class="fd-btn secondary" id="stChtRemarkSave">保存设置</button> </div> <div class="fd-sect" style="border-top:1px solid #f0f0f0;"> <div class="fd-label">📝 总结提示词</div> <textarea class="fd-remark" id="stChtSummaryPrompt" rows="3" placeholder="填写总结提示词...">${escHtml(genSettings.summaryPrompt||`请按照以下格式，为我总结从剧情起始时间（或者上次剧情总结结束时间）到目前剧情结束时间的完整剧情。
+
+格式要求：
+1. 按时间线（如XXXX年X月X日X时X分，同年/月部分只注释区别的时间。例如上文已经总结2026年，没有年份变化只需要记X月X日X时X分，年份可以省去，月份同理）分章节组织
+2. 每个时间按24小时制细分
+3. 重要对话必须完整保留原文，使用引用格式（> 角色："原话"）
+4. 不重要的过渡情节用2-3句话概括即可
+5. 关键场景需标注【关键场景】
+
+判断重要对话的标准：
+- 涉及角色核心性格/动机的表达
+- 影响后续剧情走向的决策
+- 建立或改变角色关系的互动
+- 包含关键信息/秘密的揭露
+
+目的：生成一份可供后续对话参考的"剧情档案"，确保角色不会失忆，剧情线索不会丢失。`)}</textarea> <div class="fd-label" style="margin-top:8px;">总结结果 <span style="font-size:9px;color:#ccc;">（全部上下文）</span></div> <textarea class="fd-remark" id="stChtSummaryResult" rows="12" placeholder="点击「开始生成」后结果会显示在这里..." style="font-size:12px;color:#555;background:#fafafa;min-height:160px;"></textarea> <div style="display:flex;gap:6px;margin-top:8px;"> <button class="fd-btn" id="stChtSummaryGen" style="flex:2;padding:8px;">开始生成</button> <button class="fd-btn secondary" id="stChtSummaryCopy" style="flex:1;padding:8px;">一键复制</button> <button class="fd-btn secondary" id="stChtSummaryImport" style="flex:1.5;padding:8px;">导入世界书</button> </div> <div id="stChtSummaryStatus" style="font-size:11px;min-height:14px;margin-top:4px;color:#999;"></div> </div> <div class="fd-sect" style="border-top:1px solid #f0f0f0;"> <button class="fd-btn secondary" id="stChtClearBtn" style="color:#c04040;border-color:#f0c0c0;background:#fff5f5;">🗑 清空聊天记录</button> </div>`;
 
 D.getElementById("stChtAutoToggle").addEventListener("change",function(){D.getElementById("stChtIntervalRow").classList.toggle("shown",this.checked);});
 D.getElementById("stChtRemarkSave").addEventListener("click",()=>{
@@ -1870,7 +1885,22 @@ const summaryPromptEl=D.getElementById("stChtSummaryPrompt");
 if(summaryPromptEl)summaryPromptEl.addEventListener("change",()=>{genSettings.summaryPrompt=summaryPromptEl.value;saveGenSettings();});
 D.getElementById("stChtSummaryGen").addEventListener("click",async()=>{
 const genBtn=D.getElementById("stChtSummaryGen"),statusEl=D.getElementById("stChtSummaryStatus"),resultEl=D.getElementById("stChtSummaryResult");
-const promptTpl=(D.getElementById("stChtSummaryPrompt")?.value||"").trim()||"👽";
+const promptTpl=(D.getElementById("stChtSummaryPrompt")?.value||"").trim()||`请按照以下格式，为我总结从剧情起始时间（或者上次剧情总结结束时间）到目前剧情结束时间的完整剧情。
+
+格式要求：
+1. 按时间线（如XXXX年X月X日X时X分，同年/月部分只注释区别的时间。例如上文已经总结2026年，没有年份变化只需要记X月X日X时X分，年份可以省去，月份同理）分章节组织
+2. 每个时间按24小时制细分
+3. 重要对话必须完整保留原文，使用引用格式（> 角色："原话"）
+4. 不重要的过渡情节用2-3句话概括即可
+5. 关键场景需标注【关键场景】
+
+判断重要对话的标准：
+- 涉及角色核心性格/动机的表达
+- 影响后续剧情走向的决策
+- 建立或改变角色关系的互动
+- 包含关键信息/秘密的揭露
+
+目的：生成一份可供后续对话参考的"剧情档案"，确保角色不会失忆，剧情线索不会丢失。`;
 genBtn.disabled=true;genBtn.textContent="生成中...";statusEl.textContent="";
 try{
 let ctx3;try{ctx3=UW.window.parent.SillyTavern?.getContext();}catch(_){}
