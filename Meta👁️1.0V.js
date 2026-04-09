@@ -21,7 +21,7 @@ try { localStorage.setItem(key, JSON.stringify(val)); } catch(_) {}
 
 const D = window.parent.document;
 const ROOT_ID = "stThtrRoot";  /* ── 公告内容（在这里填写，
- 表示换行） ── */ const NOTICE_CONTENT = "👽作者：绥玉。\n联系方式：QQ3461187262\n本脚本于2026.4.8发布。\n \n2026.4.9更新内容一览：\n①增加了新兼容模式，减少报错。\n②增加了公告栏。\n③修补了ai知道时间也不告知的bug。\n④修补了char不知道撤回了的bug。\n";
+ 表示换行） ── */ const NOTICE_CONTENT = "👽作者：绥玉。\n联系方式：QQ3461187262\n本脚本于2026.4.8发布。\n \n个人建议：用官方按量轻型模型，\n比如claude haiku。\n便宜味也不错。\n \n2026.4.9更新内容一览：\n①增加了新兼容模式，减少报错。\n②增加了公告栏。\n③修补了ai知道时间也不告知的bug。\n④修补了char不知道撤回了的bug。\n⑤修补了函数错误。";
 if (D.getElementById(ROOT_ID)) return;
 
 const API_KEY      = "stThtrApiSettings";
@@ -2378,7 +2378,7 @@ ${stickerHint}
 • status 每次必填
 • 你的整个回复只有这一个 JSON 对象，不要在 JSON 前后加任何文字`;
 
-const hist=log.slice(-chatD).map(m=>{
+const chatD = genSettings.chatHistoryDepth || 100; const log = getCurrentLog(); const hist = log.slice(-chatD).map(m=>{
 if(m.recalled&&m.charSaw)return{role:m.role,content:`（${userName}撤回了消息，但${charName}看见了："${m.recalledContent}"）`};
 if(m.recalled&&!m.charSaw)return{role:m.role,content:`（${userName}撤回了一条消息，${charName}看见了撤回，但没有看见内容）`};
 return{role:m.role,content:m.content||""};});
