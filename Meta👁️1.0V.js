@@ -36,7 +36,7 @@ const STATUS_LOG_KEY = "stThtrStatusLog";
 let apiSettings = { url: "", key: "", model: "" };
 let genSettings = {
 temperature: 0.88, topP: 1, freqPenalty: 0, presPenalty: 0,
-historyDepth: 10, chatHistoryDepth: 100, widgetWidth: 180,
+historyDepth: 10, chatHistoryDepth: 500, widgetWidth: 180,
 settingsPanelWidth: 268, settingsPanelAutoH: true, settingsPanelHeight: null,
 reviewPanelWidth: 248, reviewPanelAutoH: false, reviewPanelHeight: 400,
 chatPanelWidth: 375, chatPanelAutoH: true, chatPanelHeight: null,
@@ -100,7 +100,7 @@ const t={}; for(const k in statusLog) t[k]=(statusLog[k]||[]).slice(-50);
 statusLog=t; try{GM_setValue(STATUS_LOG_KEY,statusLog);}catch(_){}
 }
 function saveChatLogs() {
-const t={}; for(const k in chatLogs) t[k]=chatLogs[k].slice(-100);
+const t={}; for(const k in chatLogs) t[k]=chatLogs[k].slice(-50000);
 chatLogs=t; try{GM_setValue(CHAT_KEY,chatLogs);}catch(_){}
 }
 loadStorage();
@@ -1146,12 +1146,14 @@ const memTxt=[priorityTxt,...scriptEntries].filter(Boolean).join("\n\n");
 const stD=genSettings.historyDepth||10,stHist=buildChatHistory(stD);
 const stTxt=stHist.map(m=>(m.role==="user"?userName:charName)+"："+m.content).join("\n");
 const chatD=genSettings.chatHistoryDepth||100,log=getCurrentLog();
+const chatStart=Math.max(1, log.length - Math.min(chatD, log.length) + 1);
+const chatEnd=log.length;
 const chatTxt=log.slice(-chatD).map(m=>(m.role==="user"?userName:charName)+"："+(m.content||"")).join("\n");
 const tPersona=estTokens(personaTxt),tMem=estTokens(memTxt),tStFloor=estTokens(stTxt),tChatFloor=estTokens(chatTxt);
 const tFrame=estTokens(`你是${charName}。你拥有${charName}完整的记忆`)+80;
 const tTotal=tFrame+tPersona+tMem+tStFloor+tChatFloor;
 const bar=(v,max)=>{const pct=Math.min(100,Math.round(v/Math.max(max,1)*100));return`<div style="height:3px;background:rgba(255,255,255,.08);border-radius:2px;margin:1px 0 3px;"><div style="height:100%;width:${pct}%;background:rgba(100,180,255,.5);border-radius:2px;"></div></div>`;};
-box.innerHTML=`<div style="display:flex;justify-content:space-between;color:rgba(255,255,255,.85);margin-bottom:4px;font-weight:500;"><span>总计</span><span>≈ ${tTotal.toLocaleString()} tokens</span></div>${bar(tTotal,tTotal)}<div style="display:flex;justify-content:space-between;"><span>人设设定</span><span style="color:rgba(255,255,255,.82);">≈ ${tPersona.toLocaleString()}</span></div>${bar(tPersona,tTotal)}<div style="display:flex;justify-content:space-between;"><span>记忆系统</span><span style="color:rgba(255,255,255,.82);">≈ ${tMem.toLocaleString()}</span></div>${bar(tMem,tTotal)}<div style="display:flex;justify-content:space-between;"><span>ST楼层 (${stD}楼·${stHist.length}条)</span><span style="color:rgba(255,255,255,.82);">≈ ${tStFloor.toLocaleString()}</span></div>${bar(tStFloor,tTotal)}<div style="display:flex;justify-content:space-between;"><span>Chat楼层 (${Math.min(chatD,log.length)}条)</span><span style="color:rgba(255,255,255,.82);">≈ ${tChatFloor.toLocaleString()}</span></div>${bar(tChatFloor,tTotal)}<div style="font-size:9.5px;color:rgba(255,255,255,.28);margin-top:4px;">仅估算，实际值因分词器而异</div>`;
+box.innerHTML=`<div style="display:flex;justify-content:space-between;color:rgba(255,255,255,.85);margin-bottom:4px;font-weight:500;"><span>总计</span><span>≈ ${tTotal.toLocaleString()} tokens</span></div>${bar(tTotal,tTotal)}<div style="display:flex;justify-content:space-between;"><span>人设设定</span><span style="color:rgba(255,255,255,.82);">≈ ${tPersona.toLocaleString()}</span></div>${bar(tPersona,tTotal)}<div style="display:flex;justify-content:space-between;"><span>记忆系统</span><span style="color:rgba(255,255,255,.82);">≈ ${tMem.toLocaleString()}</span></div>${bar(tMem,tTotal)}<div style="display:flex;justify-content:space-between;"><span>ST楼层 (${stD}楼·${stHist.length}条)</span><span style="color:rgba(255,255,255,.82);">≈ ${tStFloor.toLocaleString()}</span></div>${bar(tStFloor,tTotal)}<div style="display:flex;justify-content:space-between;"><span>Chat楼层 (第${chatStart}-${chatEnd}楼·${Math.min(chatD,log.length)}条)</span><span style="color:rgba(255,255,255,.82);">≈ ${tChatFloor.toLocaleString()}</span></div>${bar(tChatFloor,tTotal)}<div style="font-size:9.5px;color:rgba(255,255,255,.28);margin-top:4px;">仅估算，实际值因分词器而异</div>`;
 }
 
 function bindFontAndCSSEvents() {
@@ -1891,7 +1893,7 @@ let stFloorCount=0,miniChatCount=0,stReadCount=0;
 try{const c2=UW.window.parent.SillyTavern?.getContext();stFloorCount=(c2?.chat||[]).filter(m=>!m.is_system).length;const stHist=buildChatHistory(genSettings.historyDepth||10);stReadCount=stHist.length;}catch(_){}
 miniChatCount=getCurrentLog().length;const r=getCurRemark();
 const unitOpts=["min","hour","day"].map(u=>`<option value="${u}" ${r.intervalUnit===u?"selected":""}>${{min:"分钟",hour:"小时",day:"天"}[u]}</option>`).join("");
-floorPopup.innerHTML=` <div class="fd-sect" style="background:#f8f8f8;border-bottom:1px solid #f0f0f0;padding:10px 16px;"> <div style="display:flex;justify-content:space-between;align-items:center;font-size:10.5px;color:#bbb;letter-spacing:.04em;margin-bottom:2px;"><span>📚 ST 主线楼层</span><strong style="color:#444;font-size:12px">${stFloorCount} 楼（实际读取 ${stReadCount} 楼）</strong></div> <div style="display:flex;justify-content:space-between;align-items:center;font-size:10.5px;color:#bbb;letter-spacing:.04em;"><span>💬 私聊记录</span><strong style="color:#444;font-size:12px">${miniChatCount} 条</strong></div> </div> <div class="fd-sect"><div class="fd-label">📚 ST 主线楼层读取深度</div><div style="display:flex;align-items:center;gap:8px;margin-top:5px"><input class="fd-num" id="stChtSTDepth" type="number" min="0" max="500" value="${genSettings.historyDepth||10}" style="width:64px"><span style="font-size:11px;color:#999">楼（默认10）</span></div></div> <div class="fd-sect"><div class="fd-label">💬 私聊记录读取条数</div><div style="display:flex;align-items:center;gap:8px;margin-top:5px"><input class="fd-num" id="stChtHistDepth" type="number" min="1" max="500" value="${genSettings.chatHistoryDepth||100}" style="width:64px"><span style="font-size:11px;color:#999">条（默认100）</span></div></div> <div class="fd-sect"><div class="fd-label">备注 · 仅自己可见</div><textarea class="fd-remark" id="stChtRemarkTA" rows="3" placeholder="随手记点什么...">${escHtml(r.note||"")}</textarea></div> <div class="fd-sect"> <div class="fd-row"><div><div class="fd-row-label">让 TA 主动发消息</div><div class="fd-row-sub">按设定间隔自动生成一条</div></div><label class="fd-toggle"><input type="checkbox" id="stChtAutoToggle" ${r.autoMsg?"checked":""}><span class="fd-slider"></span></label></div> <div class="fd-interval ${r.autoMsg?"shown":""}" id="stChtIntervalRow">每隔<input class="fd-num" id="stChtIntervalVal" type="number" min="1" value="${r.intervalVal||1}"><select class="fd-unit" id="stChtIntervalUnit">${unitOpts}</select>发一次</div> </div> <div class="fd-sect"> <button class="fd-btn" id="stChtTriggerNow">⚡ 让 TA 现在发一条</button> <button class="fd-btn secondary" id="stChtRemarkSave">保存设置</button> </div> <div class="fd-sect" style="border-top:1px solid #f0f0f0;"> <div class="fd-label">📝 总结提示词</div> <textarea class="fd-remark" id="stChtSummaryPrompt" rows="3" placeholder="填写总结提示词...">${escHtml(genSettings.summaryPrompt||`请按照以下格式，为我总结从剧情起始时间（或者上次剧情总结结束时间）到目前剧情结束时间的完整剧情。
+floorPopup.innerHTML=` <div class="fd-sect" style="background:#f8f8f8;border-bottom:1px solid #f0f0f0;padding:10px 16px;"> <div style="display:flex;justify-content:space-between;align-items:center;font-size:10.5px;color:#bbb;letter-spacing:.04em;margin-bottom:2px;"><span>📚 ST 主线楼层</span><strong style="color:#444;font-size:12px">${stFloorCount} 楼（实际读取 ${stReadCount} 楼）</strong></div> <div style="display:flex;justify-content:space-between;align-items:center;font-size:10.5px;color:#bbb;letter-spacing:.04em;"><span>💬 私聊记录</span><strong style="color:#444;font-size:12px">${miniChatCount} 条（实际读取 ${Math.min(genSettings.chatHistoryDepth||500,miniChatCount)} 条）</strong></div> </div> <div class="fd-sect"><div class="fd-label">📚 ST 主线楼层读取深度</div><div style="display:flex;align-items:center;gap:8px;margin-top:5px"><input class="fd-num" id="stChtSTDepth" type="number" min="0" max="500" value="${genSettings.historyDepth||10}" style="width:64px"><span style="font-size:11px;color:#999">楼（默认10）</span></div></div> <div class="fd-sect"><div class="fd-label">💬 私聊记录读取条数</div><div style="display:flex;align-items:center;gap:8px;margin-top:5px"><input class="fd-num" id="stChtHistDepth" type="number" min="1" max="500" value="${genSettings.chatHistoryDepth||100}" style="width:64px"><span style="font-size:11px;color:#999">条（默认100）</span></div></div> <div class="fd-sect"><div class="fd-label">备注 · 仅自己可见</div><textarea class="fd-remark" id="stChtRemarkTA" rows="3" placeholder="随手记点什么...">${escHtml(r.note||"")}</textarea></div> <div class="fd-sect"> <div class="fd-row"><div><div class="fd-row-label">让 TA 主动发消息</div><div class="fd-row-sub">按设定间隔自动生成一条</div></div><label class="fd-toggle"><input type="checkbox" id="stChtAutoToggle" ${r.autoMsg?"checked":""}><span class="fd-slider"></span></label></div> <div class="fd-interval ${r.autoMsg?"shown":""}" id="stChtIntervalRow">每隔<input class="fd-num" id="stChtIntervalVal" type="number" min="1" value="${r.intervalVal||1}"><select class="fd-unit" id="stChtIntervalUnit">${unitOpts}</select>发一次</div> </div> <div class="fd-sect"> <button class="fd-btn" id="stChtTriggerNow">⚡ 让 TA 现在发一条</button> <button class="fd-btn secondary" id="stChtRemarkSave">保存设置</button> </div> <div class="fd-sect" style="border-top:1px solid #f0f0f0;"> <div class="fd-label">📝 总结提示词</div> <textarea class="fd-remark" id="stChtSummaryPrompt" rows="3" placeholder="填写总结提示词...">${escHtml(genSettings.summaryPrompt||`请按照以下格式，为我总结从剧情起始时间（或者上次剧情总结结束时间）到目前剧情结束时间的完整剧情。
 
 格式要求：
 
@@ -2378,7 +2380,7 @@ ${stickerHint}
 • status 每次必填
 • 你的整个回复只有这一个 JSON 对象，不要在 JSON 前后加任何文字`;
 
-const chatD = genSettings.chatHistoryDepth || 100; const log = getCurrentLog(); const hist = log.slice(-chatD).map(m=>{
+const chatD = genSettings.chatHistoryDepth || 500; const log = getCurrentLog(); const hist = log.slice(-chatD).map(m=>{
 if(m.recalled&&m.charSaw)return{role:m.role,content:`（${userName}撤回了消息，但${charName}看见了："${m.recalledContent}"）`};
 if(m.recalled&&!m.charSaw)return{role:m.role,content:`（${userName}撤回了一条消息，${charName}看见了撤回，但没有看见内容）`};
 return{role:m.role,content:m.content||""};});
