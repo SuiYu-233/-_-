@@ -21,7 +21,7 @@ try { localStorage.setItem(key, JSON.stringify(val)); } catch(_) {}
 
 const D = window.parent.document;
 const ROOT_ID = "stThtrRoot";  /* ── 公告内容（在这里填写，
- 表示换行） ── */ const NOTICE_CONTENT = "👽作者：绥玉。\n联系方式：QQ3461187262\n本脚本于2026.4.8发布。\n \n个人建议：用官方按量轻型模型，\n比如claude haiku。\n便宜味也不错。\n \n2026.4.9更新内容一览：\n①增加了新兼容模式，减少报错。\n②增加了公告栏。\n③修补了ai知道时间也不告知的bug。\n④修补了char不知道撤回了的bug。\n⑤修补了函数错误。";
+ 表示换行） ── */ const NOTICE_CONTENT = "👽作者：绥玉。\n联系方式：QQ3461187262\n本脚本于2026.4.8发布。\n \n个人建议：用官方按量轻型模型，\n比如claude haiku。\n便宜味也不错。\n \n2026.4.9更新内容一览：\n①增加了新兼容模式，减少报错。\n②增加了公告栏。\n③修补了ai知道时间也不告知的bug。\n④修补了char不知道撤回了的bug。\n⑤修补了函数错误。\n \n2026.4.10更新一览：\n①增加了预设区域。\n②预设内放置了默认预设「绥玉の预设」线上版。";
 if (D.getElementById(ROOT_ID)) return;
 
 const API_KEY      = "stThtrApiSettings";
