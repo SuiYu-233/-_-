@@ -1,0 +1,1296 @@
+// ST 小说伴读器 v2.0
+// 使用方式：粘贴到 SillyTavern「扩展 → JS-Slash-Runner → 全局脚本」并启用
+// 不需要 Tampermonkey
+
+(function () {
+‘use strict’;
+
+// ═══════════════════════════════════════════════════════════
+//  CORE REFS — 在 JS-Slash-Runner iframe 里，parent 才是 ST 主页面
+// ═══════════════════════════════════════════════════════════
+var P = window.parent;
+var D = P.document;
+
+var ST = function () {
+try {
+return P.SillyTavern && P.SillyTavern.getContext ? P.SillyTavern.getContext() : null;
+} catch (e) { return null; }
+};
+
+var ROOT_ID = ‘snr-root’;
+var FAB_ID  = ‘snr-fab’;
+var CSS_ID  = ‘snr-css’;
+var LS_KEY  = ‘st_novel_reader_v1’;
+var CHARS_PER_PAGE = 900;
+
+// ─── 去重：移除旧实例再重建，不直接退出 ───────────────────
+var _old = D.getElementById(ROOT_ID); if (_old) _old.remove();
+var _ofb = D.getElementById(FAB_ID);  if (_ofb) _ofb.remove();
+var _ocs = D.getElementById(CSS_ID);  if (_ocs) _ocs.remove();
+
+// ═══════════════════════════════════════════════════════════
+//  本地存储（用 parent 的 localStorage）
+// ═══════════════════════════════════════════════════════════
+var Store = {
+load: function () {
+try { return JSON.parse(P.localStorage.getItem(LS_KEY) || ‘{}’); }
+catch (e) { return {}; }
+},
+save: function (d) { P.localStorage.setItem(LS_KEY, JSON.stringify(d)); },
+get: function (k, z) {
+var data = this.load();
+return (data[k] !== undefined && data[k] !== null) ? data[k] : z;
+},
+set: function (k, v) {
+var d = this.load(); d[k] = v; this.save(d);
+}
+};
+
+// ═══════════════════════════════════════════════════════════
+//  全局状态
+// ═══════════════════════════════════════════════════════════
+var S = {
+panelOpen:     false,
+view:          ‘shelf’,
+books:          Store.get(‘books’,    []),
+currentBookId:  null,
+currentPage:    0,
+pages:          [],
+charInfo:       null,
+charHidden:     Store.get(‘charHidden’, false),
+bubbleText:     ‘’,
+bubbleLoading:  false,
+memories:       Store.get(‘memories’,  {}),
+bookmarks:      Store.get(‘bookmarks’, {}),
+progress:       Store.get(‘progress’,  {}),
+settingsOpen:   false,
+thoughtsOpen:   false,
+plusOpen:       false,
+lpMenuOpen:     false,
+touchStartX:    0
+};
+
+var root; // 面板元素
+var fab;  // 浮动触发按钮
+
+// ═══════════════════════════════════════════════════════════
+//  角色信息
+// ═══════════════════════════════════════════════════════════
+function getCharInfo() {
+try {
+var ctx = ST(); if (!ctx) return null;
+var idx = ctx.characterId; if (idx == null) return null;
+var ch = ctx.characters[idx]; if (!ch) return null;
+return {
+name:        ch.name        || ‘角色’,
+avatarUrl:   ch.avatar ? ‘/characters/’ + encodeURIComponent(ch.avatar) : null,
+description: ch.description || ‘’,
+personality: ch.personality || ‘’
+};
+} catch (e) { return null; }
+}
+
+function refreshChar() {
+S.charInfo = getCharInfo();
+updateCharArea();
+if (S.settingsOpen) openSettings(true);
+}
+
+setInterval(function () {
+var n = getCharInfo();
+var nName = n ? n.name : null, nUrl = n ? n.avatarUrl : null;
+var oName = S.charInfo ? S.charInfo.name : null, oUrl = S.charInfo ? S.charInfo.avatarUrl : null;
+if (nName !== oName || nUrl !== oUrl) { S.charInfo = n; updateCharArea(); }
+}, 2000);
+
+try {
+if (typeof eventOn === ‘function’ && typeof tavern_events !== ‘undefined’) {
+eventOn(tavern_events.CHARACTER_SELECTED, refreshChar);
+}
+} catch (e) {}
+
+// ═══════════════════════════════════════════════════════════
+//  书籍管理
+// ═══════════════════════════════════════════════════════════
+function importBook(file) {
+return new Promise(function (res, rej) {
+var fr = new FileReader();
+fr.onload = function (e) {
+var content = e.target.result;
+var pages   = splitPages(content);
+var book    = {
+id: Date.now().toString(), title: file.name.replace(/.(txt|md)$/i, ‘’),
+content: content, pageCount: pages.length, addedAt: Date.now()
+};
+S.books.unshift(book);
+Store.set(‘books’, S.books);
+res(book);
+};
+fr.onerror = rej;
+fr.readAsText(file, ‘utf-8’);
+});
+}
+
+function deleteBook(id) {
+S.books = S.books.filter(function (b) { return b.id !== id; });
+[‘books’, ‘memories’, ‘bookmarks’, ‘progress’].forEach(function (k) {
+if (k === ‘books’) Store.set(k, S.books);
+else { delete S[k][id]; Store.set(k, S[k]); }
+});
+}
+
+function openBook(id) {
+var book = S.books.find(function (b) { return b.id === id; });
+if (!book) return;
+S.currentBookId = id;
+S.pages         = splitPages(book.content);
+if (!S.pages.length) S.pages = [’[空白文件]’];
+S.currentPage   = S.progress[id] || 0;
+S.view          = ‘reader’;
+S.bubbleText    = ‘’; S.bubbleLoading = false;
+S.plusOpen = false; S.thoughtsOpen = false;
+render();
+}
+
+function closeBook() {
+S.view = ‘shelf’; S.currentBookId = null; S.pages = [];
+S.bubbleText = ‘’; S.bubbleLoading = false;
+S.plusOpen = false; S.thoughtsOpen = false; S.lpMenuOpen = false;
+render();
+}
+
+// ═══════════════════════════════════════════════════════════
+//  分页
+// ═══════════════════════════════════════════════════════════
+function splitPages(text) {
+if (!text || !text.trim()) return [’[空白文件]’];
+var paras = text.split(/\n\s*\n/).map(function (p) { return p.trim(); }).filter(Boolean);
+var pages = [], cur = ‘’;
+for (var i = 0; i < paras.length; i++) {
+var p = paras[i];
+if (cur.length + p.length + 2 > CHARS_PER_PAGE && cur) { pages.push(cur.trim()); cur = p; }
+else cur += (cur ? ‘\n\n’ : ‘’) + p;
+}
+if (cur.trim()) pages.push(cur.trim());
+return pages.length ? pages : [text];
+}
+
+function goToPage(n) {
+S.currentPage = Math.max(0, Math.min(n, S.pages.length - 1));
+S.progress[S.currentBookId] = S.currentPage;
+Store.set(‘progress’, S.progress);
+S.bubbleText = ‘’; S.thoughtsOpen = false; S.plusOpen = false;
+renderReaderContent(); updatePageNav(); updateTopPageNum(); updateCharArea();
+}
+
+// ═══════════════════════════════════════════════════════════
+//  书签
+// ═══════════════════════════════════════════════════════════
+function toggleBookmark() {
+var id = S.currentBookId;
+if (!S.bookmarks[id]) S.bookmarks[id] = [];
+var idx = S.bookmarks[id].indexOf(S.currentPage);
+if (idx >= 0) S.bookmarks[id].splice(idx, 1);
+else S.bookmarks[id].push(S.currentPage);
+Store.set(‘bookmarks’, S.bookmarks);
+updateBmBtn();
+}
+
+function isBookmarked() {
+return (S.bookmarks[S.currentBookId] || []).indexOf(S.currentPage) >= 0;
+}
+
+// ═══════════════════════════════════════════════════════════
+//  记忆
+// ═══════════════════════════════════════════════════════════
+function addMemory(bookId, content, type) {
+if (!S.memories[bookId]) S.memories[bookId] = [];
+S.memories[bookId].push({ id: Date.now().toString(), type: type, content: content, page: S.currentPage, ts: Date.now() });
+Store.set(‘memories’, S.memories);
+}
+
+// ═══════════════════════════════════════════════════════════
+//  AI 调用
+// ═══════════════════════════════════════════════════════════
+var charName  = function () { return S.charInfo ? (S.charInfo.name || ‘角色’) : ‘角色’; };
+var bookTitle = function () { var b = S.books.find(function (b) { return b.id === S.currentBookId; }); return b ? b.title : ‘小说’; };
+var curPage   = function () { return S.pages[S.currentPage] || ‘’; };
+
+async function aiCall(userInput, systemExtra, maxHistory) {
+if (typeof generateRaw !== ‘function’) return ‘（AI接口不可用，请确保已连接API）’;
+var hist = (maxHistory !== undefined && maxHistory !== null) ? maxHistory : ‘all’;
+return await generateRaw({
+user_input: systemExtra + ‘\n\n’ + userInput,
+max_chat_history: hist,
+ordered_prompts: [‘char_description’, ‘chat_history’, ‘user_input’]
+});
+}
+
+async function generateChat(userMsg) {
+var novelCtx = ‘【当前阅读：《’ + bookTitle() + ‘》第 ’ + (S.currentPage + 1) + ’ 页】\n’ + curPage().slice(0, 600);
+var sys = ‘你正在陪伴用户阅读小说《’ + bookTitle() + ‘》。保持你的角色性格，语气自然真实，像朋友聊天一样，回复简短有温度。’;
+try { return await aiCall(novelCtx + ‘\n\n用户：’ + userMsg, sys, 8); }
+catch (e) { return ‘（暂时没有回应…）’; }
+}
+
+async function generateThoughts() {
+var sys = ‘你是’ + charName() + ‘，以下是你此刻真实的内心独白——可能是对这段小说内容的真实感受（未必和你表面说的一致）；可能走神想到了别的事；也可能表里如一、专心在看。一切以符合你的性格为准。50-100字，第一人称内心独白。’;
+try { return await aiCall(‘小说《’ + bookTitle() + ‘》第 ’ + (S.currentPage + 1) + ’ 页：\n’ + curPage().slice(0, 800), sys, 0); }
+catch (e) { return ‘（心绪不明…）’; }
+}
+
+async function generateMemory(content, type) {
+var prevMems = S.memories[S.currentBookId] || [];
+var prev = prevMems.slice(-2).map(function (m) { return m.content; }).join(’\n—\n’);
+var instruction = type === ‘page’
+? ‘请对下面这段小说内容生成记忆摘要（80-150字）：\n- 概括核心情节\n- 保留关键细节与转折\n- 若有用户与你讨论的重要内容，原文保留\n- 用”本页记忆：“开头’
+: ‘请对下面的小说内容生成记忆摘要（150-250字）：\n- 大部分内容简要概括\n- 当前页及重点剧情详细描述\n- 若有用户与你讨论的重要内容，原文保留\n- 用”进度记忆：“开头\n\n参考已有记忆：\n’ + (prev || ‘（暂无）’);
+try { return await aiCall(instruction + ‘\n\n内容：\n’ + content.slice(0, 3000), ‘你是’ + charName() + ‘，正在整理阅读记忆。’, 0); }
+catch (e) { return content.slice(0, 200) + ‘…（摘要生成失败）’; }
+}
+
+async function sendPageToChar(includeAll) {
+closeLPMenu();
+S.bubbleText = ‘’; S.bubbleLoading = true;
+updateCharArea();
+var content = includeAll ? S.pages.slice(0, S.currentPage + 1).join(’\n\n—\n\n’) : curPage();
+var prompt = includeAll
+? ‘我把《’ + bookTitle() + ‘》从头到第 ’ + (S.currentPage + 1) + ’ 页都发给你看了，你有什么感想？’
+: ‘我把《’ + bookTitle() + ‘》第 ’ + (S.currentPage + 1) + ’ 页发给你，你怎么看这段？’;
+try {
+var reaction = await generateChat(prompt + ‘\n\n[内容节选]\n’ + content.slice(0, 1200));
+S.bubbleLoading = false; S.bubbleText = reaction; updateCharArea();
+var mem = await generateMemory(content, includeAll ? ‘all’ : ‘page’);
+addMemory(S.currentBookId, mem, includeAll ? ‘cumulative’ : ‘page’);
+toast(‘记忆已保存 ✓’);
+} catch (e) {
+S.bubbleLoading = false; S.bubbleText = ‘（发送失败，请重试）’; updateCharArea();
+}
+}
+
+// ═══════════════════════════════════════════════════════════
+//  样式注入（全部 !important，抵抗 ST 框架覆盖）
+// ═══════════════════════════════════════════════════════════
+function injectCSS() {
+var s = D.createElement(‘style’);
+s.id = CSS_ID;
+s.textContent = [
+// ── FAB 触发按钮 ──────────────────────────────────────
+‘#snr-fab {’,
+’  position: fixed !important;’,
+’  right: 12px !important;’,
+’  bottom: 88px !important;’,
+’  width: 46px !important; height: 46px !important;’,
+’  border-radius: 50% !important;’,
+’  background: #6b5545 !important;’,
+’  color: #fff !important;’,
+’  border: none !important;’,
+’  font-size: 20px !important;’,
+’  z-index: 2147483647 !important;’,
+’  cursor: pointer !important;’,
+’  box-shadow: 0 3px 14px rgba(0,0,0,0.30) !important;’,
+’  display: flex !important; align-items: center !important; justify-content: center !important;’,
+’  transition: background .2s, transform .15s !important;’,
+’  -webkit-tap-highlight-color: transparent !important;’,
+‘}’,
+‘#snr-fab:active { background: #4a3525 !important; transform: scale(.92) !important; }’,
+
+```
+  // ── 侧边面板 ──────────────────────────────────────────
+  '#snr-root, #snr-root * { box-sizing: border-box !important; -webkit-tap-highlight-color: transparent !important; }',
+  '#snr-root {',
+  '  position: fixed !important;',
+  '  top: 0 !important; right: 0 !important; bottom: 0 !important; left: auto !important;',
+  '  width: 320px !important; max-width: 88vw !important;',
+  '  z-index: 2147483646 !important;',
+  '  transform: translateX(100%) !important;',
+  '  transition: transform .3s cubic-bezier(.4,0,.2,1) !important;',
+  '  display: flex !important; flex-direction: column !important;',
+  '  background: #f7f2eb !important;',
+  '  color: #2c2520 !important;',
+  '  font-family: "PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif !important;',
+  '  overflow: hidden !important;',
+  '  user-select: none !important;',
+  '  box-shadow: -4px 0 24px rgba(0,0,0,0.18) !important;',
+  '}',
+  '#snr-root.snr-open { transform: translateX(0) !important; }',
+  '#snr-root input, #snr-root textarea { user-select: text !important; }',
+
+  // ── 顶栏 ──────────────────────────────────────────────
+  '.snr-topbar {',
+  '  display: flex !important; align-items: center !important; gap: 4px !important;',
+  '  padding: 10px 10px !important;',
+  '  background: rgba(247,242,235,0.97) !important;',
+  '  border-bottom: 1px solid rgba(0,0,0,0.07) !important;',
+  '  flex-shrink: 0 !important;',
+  '}',
+  '.snr-topbar-title {',
+  '  flex: 1 !important; font-size: 13px !important; font-weight: 600 !important;',
+  '  color: #3a2e26 !important; text-align: center !important;',
+  '  overflow: hidden !important; text-overflow: ellipsis !important; white-space: nowrap !important;',
+  '}',
+  '.snr-tbtn {',
+  '  width: 32px !important; height: 32px !important; border-radius: 50% !important;',
+  '  border: none !important; background: none !important;',
+  '  display: flex !important; align-items: center !important; justify-content: center !important;',
+  '  font-size: 16px !important; color: #5a4535 !important; cursor: pointer !important;',
+  '  flex-shrink: 0 !important; transition: background .15s !important;',
+  '}',
+  '.snr-tbtn:active { background: rgba(0,0,0,0.08) !important; }',
+  // 收起面板按钮（面板内右上角）
+  '.snr-close-panel {',
+  '  width: 32px !important; height: 32px !important; border-radius: 50% !important;',
+  '  border: none !important; background: rgba(0,0,0,0.06) !important;',
+  '  display: flex !important; align-items: center !important; justify-content: center !important;',
+  '  font-size: 14px !important; color: #6b5545 !important; cursor: pointer !important;',
+  '  flex-shrink: 0 !important; transition: background .15s !important;',
+  '}',
+  '.snr-close-panel:active { background: rgba(0,0,0,0.14) !important; }',
+  '.snr-page-num { font-size: 10px !important; color: #a09080 !important; white-space: nowrap !important; flex-shrink: 0 !important; }',
+
+  // ── 书架 ──────────────────────────────────────────────
+  '.snr-shelf { flex: 1 !important; overflow-y: auto !important; padding: 12px !important; background: #f2ede3 !important; }',
+  '.snr-empty { text-align: center !important; padding: 50px 20px !important; color: #b0a090 !important; }',
+  '.snr-empty-icon { font-size: 44px !important; margin-bottom: 10px !important; }',
+  '.snr-books-grid { display: grid !important; grid-template-columns: repeat(3,1fr) !important; gap: 10px !important; }',
+  '.snr-book-card {',
+  '  background: #fff !important; border-radius: 12px !important; padding: 10px 6px !important;',
+  '  text-align: center !important; cursor: pointer !important; position: relative !important;',
+  '  box-shadow: 0 2px 8px rgba(0,0,0,0.07) !important;',
+  '  display: flex !important; flex-direction: column !important; align-items: center !important;',
+  '  min-height: 120px !important; transition: transform .15s !important;',
+  '}',
+  '.snr-book-card:active { transform: scale(.95) !important; }',
+  '.snr-book-cover {',
+  '  width: 44px !important; height: 60px !important; border-radius: 4px !important;',
+  '  margin-bottom: 7px !important;',
+  '  display: flex !important; align-items: center !important; justify-content: center !important;',
+  '  font-size: 20px !important; flex-shrink: 0 !important;',
+  '}',
+  '.snr-book-name {',
+  '  font-size: 10px !important; color: #3a2e26 !important; font-weight: 500 !important;',
+  '  overflow: hidden !important; display: -webkit-box !important;',
+  '  -webkit-line-clamp: 2 !important; -webkit-box-orient: vertical !important;',
+  '  line-height: 1.35 !important; width: 100% !important;',
+  '}',
+  '.snr-book-pct { font-size: 9px !important; color: #b0a090 !important; margin-top: 4px !important; }',
+  '.snr-book-del {',
+  '  position: absolute !important; top: 4px !important; right: 4px !important;',
+  '  width: 15px !important; height: 15px !important; border-radius: 50% !important;',
+  '  background: rgba(0,0,0,0.12) !important; color: #888 !important;',
+  '  font-size: 9px !important; display: flex !important; align-items: center !important;',
+  '  justify-content: center !important; cursor: pointer !important;',
+  '}',
+
+  // ── 正文 ──────────────────────────────────────────────
+  '.snr-content {',
+  '  flex: 1 !important; overflow-y: auto !important;',
+  '  padding: 16px 14px !important; line-height: 1.9 !important;',
+  '  font-size: 15px !important; color: #2c2520 !important;',
+  '  letter-spacing: .2px !important;',
+  '}',
+  '.snr-content p { margin: 0 0 .85em !important; }',
+  '.snr-page-nav { display: flex !important; gap: 6px !important; padding: 6px 12px !important; flex-shrink: 0 !important; }',
+  '.snr-nav-btn {',
+  '  flex: 1 !important; padding: 8px 0 !important; border-radius: 8px !important;',
+  '  border: 1.5px solid #d8cfc4 !important; background: transparent !important;',
+  '  color: #6b5545 !important; font-size: 12px !important; cursor: pointer !important;',
+  '  transition: background .15s !important;',
+  '}',
+  '.snr-nav-btn:active { background: #ede5da !important; }',
+  '.snr-nav-btn:disabled { opacity: .3 !important; cursor: default !important; }',
+
+  // ── 角色区 ────────────────────────────────────────────
+  '.snr-char-area {',
+  '  display: flex !important; align-items: flex-end !important;',
+  '  padding: 5px 12px 3px !important; gap: 8px !important;',
+  '  min-height: 52px !important; flex-shrink: 0 !important;',
+  '}',
+  '.snr-char-area.snr-char-hidden { visibility: hidden !important; pointer-events: none !important; }',
+  '.snr-avatar-wrap { position: relative !important; flex-shrink: 0 !important; }',
+  '.snr-avatar, .snr-avatar-ph {',
+  '  width: 44px !important; height: 44px !important; border-radius: 50% !important;',
+  '  border: 2px solid #d4c5ae !important; cursor: pointer !important; flex-shrink: 0 !important;',
+  '}',
+  '.snr-avatar { object-fit: cover !important; }',
+  '.snr-avatar-ph {',
+  '  background: linear-gradient(135deg, #c8b89a, #a08060) !important;',
+  '  display: flex !important; align-items: center !important; justify-content: center !important;',
+  '  font-size: 18px !important; color: #fff !important;',
+  '}',
+  '.snr-bubble {',
+  '  flex: 1 !important; background: #fff !important;',
+  '  border: 1px solid #e4d8c8 !important; border-radius: 10px 10px 10px 3px !important;',
+  '  padding: 7px 10px !important; font-size: 12px !important; line-height: 1.6 !important;',
+  '  color: #3a2e26 !important; max-height: 76px !important; overflow-y: auto !important;',
+  '  box-shadow: 0 1px 4px rgba(0,0,0,0.06) !important;',
+  '  animation: snr-fadeup .2s ease !important;',
+  '}',
+  '@keyframes snr-fadeup {',
+  '  from { opacity: 0; transform: translateY(6px); }',
+  '  to   { opacity: 1; transform: translateY(0);   }',
+  '}',
+  '.snr-dots { display: flex !important; gap: 4px !important; align-items: center !important; padding: 2px 0 !important; }',
+  '.snr-dots span {',
+  '  width: 5px !important; height: 5px !important; border-radius: 50% !important;',
+  '  background: #b0a090 !important; animation: snr-bounce 1.2s infinite !important;',
+  '}',
+  '.snr-dots span:nth-child(2) { animation-delay: .2s !important; }',
+  '.snr-dots span:nth-child(3) { animation-delay: .4s !important; }',
+  '@keyframes snr-bounce {',
+  '  0%,80%,100% { transform: translateY(0); }',
+  '  40%          { transform: translateY(-4px); }',
+  '}',
+
+  // ── 长按菜单（挂 D.body，需要高 z-index）─────────────
+  '.snr-lp-overlay {',
+  '  position: fixed !important; top: 0 !important; right: 0 !important;',
+  '  bottom: 0 !important; left: 0 !important;',
+  '  background: rgba(0,0,0,0.35) !important; z-index: 2147483644 !important;',
+  '  display: none !important;',
+  '}',
+  '.snr-lp-overlay.on { display: block !important; }',
+  '.snr-lp-sheet {',
+  '  position: fixed !important; bottom: 0 !important; left: 0 !important; right: 0 !important;',
+  '  background: #faf6f0 !important; border-radius: 20px 20px 0 0 !important;',
+  '  padding: 14px 14px 28px !important; z-index: 2147483645 !important;',
+  '  transform: translateY(100%) !important;',
+  '  transition: transform .28s cubic-bezier(.4,0,.2,1) !important;',
+  '  box-shadow: 0 -4px 24px rgba(0,0,0,0.12) !important;',
+  '}',
+  '.snr-lp-sheet.on { transform: translateY(0) !important; }',
+  '.snr-lp-handle {',
+  '  width: 36px !important; height: 4px !important; border-radius: 2px !important;',
+  '  background: #d0c5b5 !important; margin: 0 auto 12px !important;',
+  '}',
+  '.snr-lp-item {',
+  '  display: flex !important; align-items: center !important; gap: 12px !important;',
+  '  padding: 12px 14px !important; border-radius: 10px !important;',
+  '  cursor: pointer !important; font-size: 14px !important; color: #2c2520 !important;',
+  '  transition: background .15s !important;',
+  '}',
+  '.snr-lp-item:active { background: #ede5da !important; }',
+  '.snr-lp-item-icon { font-size: 20px !important; }',
+
+  // ── 内心独白 ──────────────────────────────────────────
+  '.snr-thoughts {',
+  '  background: linear-gradient(160deg, #f5efe7, #ede5d8) !important;',
+  '  border-top: 1px solid #ddd0be !important;',
+  '  padding: 10px 14px !important; flex-shrink: 0 !important;',
+  '  max-height: 110px !important; overflow-y: auto !important;',
+  '}',
+  '.snr-thoughts-label { font-size: 10px !important; color: #a09080 !important; margin-bottom: 4px !important; letter-spacing: .5px !important; }',
+  '.snr-thoughts-text { font-size: 13px !important; color: #5a4535 !important; line-height: 1.7 !important; font-style: italic !important; }',
+
+  // ── 加号托盘 ──────────────────────────────────────────
+  '.snr-plus-tray {',
+  '  background: #fff !important;',
+  '  border-top: 1px solid rgba(0,0,0,0.06) !important;',
+  '  padding: 8px 10px !important;',
+  '  display: grid !important; grid-template-columns: 1fr 1fr !important; gap: 8px !important;',
+  '  flex-shrink: 0 !important;',
+  '}',
+  '.snr-plus-item {',
+  '  background: #f5efe7 !important; border-radius: 10px !important;',
+  '  padding: 12px 8px !important; text-align: center !important; cursor: pointer !important;',
+  '  transition: background .15s !important;',
+  '}',
+  '.snr-plus-item:active { background: #ede5da !important; }',
+  '.snr-plus-item-icon { font-size: 22px !important; margin-bottom: 2px !important; }',
+  '.snr-plus-item-label { font-size: 11px !important; color: #3a2e26 !important; }',
+
+  // ── 输入栏 ────────────────────────────────────────────
+  '.snr-inputbar {',
+  '  display: flex !important; align-items: center !important; gap: 4px !important;',
+  '  padding: 6px 8px 10px !important;',
+  '  background: rgba(247,242,235,0.98) !important;',
+  '  border-top: 1px solid rgba(0,0,0,0.06) !important;',
+  '  flex-shrink: 0 !important;',
+  '}',
+  '.snr-ibtn {',
+  '  width: 32px !important; height: 32px !important; border-radius: 50% !important;',
+  '  border: none !important; background: none !important;',
+  '  display: flex !important; align-items: center !important; justify-content: center !important;',
+  '  font-size: 17px !important; color: #6b5545 !important; cursor: pointer !important;',
+  '  flex-shrink: 0 !important; transition: background .15s !important;',
+  '}',
+  '.snr-ibtn:active { background: rgba(0,0,0,0.08) !important; }',
+  '.snr-ibtn.active { background: #ede5da !important; }',
+  '.snr-input {',
+  '  flex: 1 !important; height: 34px !important;',
+  '  border: 1.5px solid #d0c5b5 !important; border-radius: 17px !important;',
+  '  padding: 0 12px !important; font-size: 13px !important;',
+  '  background: #fff !important; color: #2c2520 !important; outline: none !important;',
+  '  transition: border-color .15s !important;',
+  '}',
+  '.snr-input:focus { border-color: #a09080 !important; }',
+  '.snr-send-btn {',
+  '  width: 34px !important; height: 34px !important; border-radius: 50% !important;',
+  '  background: #6b5545 !important; color: #fff !important;',
+  '  border: none !important; cursor: pointer !important; flex-shrink: 0 !important;',
+  '  display: flex !important; align-items: center !important; justify-content: center !important;',
+  '  font-size: 15px !important; transition: background .15s !important;',
+  '}',
+  '.snr-send-btn:active { background: #4a3525 !important; }',
+
+  // ── 设置 Modal ────────────────────────────────────────
+  '.snr-modal-bg {',
+  '  position: fixed !important; top: 0 !important; right: 0 !important;',
+  '  bottom: 0 !important; left: 0 !important;',
+  '  background: rgba(0,0,0,0.4) !important; z-index: 2147483643 !important;',
+  '  display: flex !important; align-items: flex-end !important;',
+  '}',
+  '.snr-modal {',
+  '  background: #f7f2eb !important; width: 100% !important;',
+  '  border-radius: 22px 22px 0 0 !important;',
+  '  max-height: 88vh !important; overflow-y: auto !important;',
+  '  padding: 18px 14px 30px !important;',
+  '}',
+  '.snr-modal-hd { display: flex !important; align-items: center !important; justify-content: space-between !important; margin-bottom: 18px !important; }',
+  '.snr-modal-ttl { font-size: 16px !important; font-weight: 700 !important; color: #3a2e26 !important; }',
+  '.snr-modal-x {',
+  '  width: 26px !important; height: 26px !important; border-radius: 50% !important;',
+  '  background: rgba(0,0,0,0.08) !important; border: none !important;',
+  '  display: flex !important; align-items: center !important; justify-content: center !important;',
+  '  font-size: 12px !important; cursor: pointer !important; color: #6b5545 !important;',
+  '}',
+  '.snr-sec { margin-bottom: 20px !important; }',
+  '.snr-sec-ttl { font-size: 10px !important; color: #a09080 !important; font-weight: 600 !important; margin-bottom: 9px !important; letter-spacing: .9px !important; text-transform: uppercase !important; }',
+  '.snr-char-row { display: flex !important; align-items: center !important; gap: 10px !important; background: #fff !important; border-radius: 12px !important; padding: 10px !important; border: 1px solid #e4d8c8 !important; }',
+  '.snr-char-av { width: 40px !important; height: 40px !important; border-radius: 50% !important; object-fit: cover !important; flex-shrink: 0 !important; }',
+  '.snr-char-name { font-size: 14px !important; font-weight: 600 !important; color: #2c2520 !important; }',
+  '.snr-char-sub { font-size: 11px !important; color: #a09080 !important; margin-top: 2px !important; }',
+  '.snr-btn-ghost { margin-top: 7px !important; font-size: 12px !important; color: #6b5545 !important; padding: 7px 12px !important; background: #ede5da !important; border: none !important; border-radius: 8px !important; cursor: pointer !important; display: flex !important; align-items: center !important; gap: 6px !important; }',
+  '.snr-import-btn { width: 100% !important; padding: 12px !important; background: #6b5545 !important; color: #fff !important; border: none !important; border-radius: 12px !important; font-size: 14px !important; cursor: pointer !important; display: flex !important; align-items: center !important; justify-content: center !important; gap: 8px !important; transition: background .15s !important; }',
+  '.snr-import-btn:active { background: #4a3525 !important; }',
+  '.snr-mem-item { background: #fff !important; border-radius: 10px !important; padding: 9px 11px !important; margin-bottom: 7px !important; border: 1px solid #e4d8c8 !important; }',
+  '.snr-mem-meta { font-size: 10px !important; color: #a09080 !important; margin-bottom: 3px !important; }',
+  '.snr-mem-body { font-size: 12px !important; color: #3a2e26 !important; line-height: 1.6 !important; }',
+  '.snr-bm-item { display: flex !important; align-items: center !important; justify-content: space-between !important; padding: 10px 11px !important; background: #fff !important; border-radius: 10px !important; margin-bottom: 7px !important; border: 1px solid #e4d8c8 !important; cursor: pointer !important; transition: background .15s !important; font-size: 13px !important; color: #3a2e26 !important; }',
+  '.snr-bm-item:active { background: #f0ece4 !important; }',
+
+  // ── Toast ──────────────────────────────────────────────
+  '.snr-toast {',
+  '  position: fixed !important; bottom: 148px !important; left: 50% !important;',
+  '  transform: translateX(-50%) translateY(0) !important;',
+  '  background: rgba(0,0,0,0.72) !important; color: #fff !important;',
+  '  padding: 7px 16px !important; border-radius: 18px !important;',
+  '  font-size: 12px !important; z-index: 2147483647 !important;',
+  '  white-space: nowrap !important; pointer-events: none !important;',
+  '  animation: snr-toastin .2s ease !important;',
+  '}',
+  '@keyframes snr-toastin {',
+  '  from { opacity:0; transform: translateX(-50%) translateY(8px); }',
+  '  to   { opacity:1; transform: translateX(-50%) translateY(0);   }',
+  '}',
+
+  // ── 滚动条 ────────────────────────────────────────────
+  '#snr-root ::-webkit-scrollbar { width: 2px !important; }',
+  '#snr-root ::-webkit-scrollbar-track { background: transparent !important; }',
+  '#snr-root ::-webkit-scrollbar-thumb { background: #d0c5b5 !important; border-radius: 2px !important; }'
+].join('\n');
+D.head.appendChild(s);
+```
+
+}
+
+// ═══════════════════════════════════════════════════════════
+//  面板开关
+// ═══════════════════════════════════════════════════════════
+function openPanel() {
+S.panelOpen = true;
+root.classList.add(‘snr-open’);
+fab.textContent = ‘✕’;
+fab.title = ‘收起伴读器’;
+}
+
+function closePanel() {
+S.panelOpen = false;
+root.classList.remove(‘snr-open’);
+fab.textContent = ‘📚’;
+fab.title = ‘打开伴读器’;
+// 同时关掉长按菜单和设置
+closeLPMenu();
+closeSettings();
+}
+
+function togglePanel() {
+if (S.panelOpen) closePanel(); else openPanel();
+}
+
+// ═══════════════════════════════════════════════════════════
+//  工具函数
+// ═══════════════════════════════════════════════════════════
+var esc = function (s) {
+return String(s || ‘’).replace(/&/g, ‘&’).replace(/</g, ‘<’).replace(/>/g, ‘>’).replace(/”/g, ‘"’);
+};
+var fmtT = function (ts) {
+var d = new Date(ts);
+return (d.getMonth() + 1) + ‘/’ + d.getDate() + ’ ’ + d.getHours() + ‘:’ + String(d.getMinutes()).padStart(2, ‘0’);
+};
+var BOOK_COLORS = [’#e5d4c2’, ‘#c2d4e5’, ‘#d4e5c2’, ‘#e5c2d4’, ‘#d4c2e5’, ‘#e5e1c2’, ‘#c2e5e0’];
+
+var toastTimer;
+function toast(msg) {
+var old = D.getElementById(‘snr-toast’); if (old) old.remove();
+clearTimeout(toastTimer);
+var el = D.createElement(‘div’);
+el.id = ‘snr-toast’; el.className = ‘snr-toast’;
+el.textContent = msg;
+D.body.appendChild(el);
+toastTimer = setTimeout(function () { el.remove(); }, 2600);
+}
+
+function swipe(el) {
+el.addEventListener(‘touchstart’, function (e) { S.touchStartX = e.touches[0].clientX; }, { passive: true });
+el.addEventListener(‘touchend’, function (e) {
+var dx = e.changedTouches[0].clientX - S.touchStartX;
+if (Math.abs(dx) > 55) { if (dx < 0) goToPage(S.currentPage + 1); else goToPage(S.currentPage - 1); }
+}, { passive: true });
+}
+
+// ═══════════════════════════════════════════════════════════
+//  主渲染
+// ═══════════════════════════════════════════════════════════
+function render() {
+root.innerHTML = ‘’;
+if (S.view === ‘shelf’) renderShelf();
+else renderReader();
+}
+
+// ─── 书架 ─────────────────────────────────────────────────
+function renderShelf() {
+var tb = D.createElement(‘div’);
+tb.className = ‘snr-topbar’;
+
+```
+var ttl = D.createElement('div');
+ttl.className = 'snr-topbar-title';
+ttl.style.textAlign = 'left';
+ttl.style.fontSize = '15px';
+ttl.textContent = '📚 我的书架';
+tb.appendChild(ttl);
+
+var gear = D.createElement('button');
+gear.className = 'snr-tbtn';
+gear.textContent = '⚙️';
+gear.onclick = function () { openSettings(); };
+tb.appendChild(gear);
+
+// 收起面板按钮
+var cp = D.createElement('button');
+cp.className = 'snr-close-panel';
+cp.textContent = '›';
+cp.title = '收起';
+cp.onclick = closePanel;
+tb.appendChild(cp);
+
+root.appendChild(tb);
+
+var shelf = D.createElement('div');
+shelf.className = 'snr-shelf';
+
+if (!S.books.length) {
+  var empty = D.createElement('div');
+  empty.className = 'snr-empty';
+  empty.innerHTML = '<div class="snr-empty-icon">📖</div><div>书架空空如也</div><div style="font-size:12px;margin-top:6px">点右上角 ⚙️ 导入书籍</div>';
+  shelf.appendChild(empty);
+} else {
+  var grid = D.createElement('div');
+  grid.className = 'snr-books-grid';
+  S.books.forEach(function (book, i) {
+    var prog = S.progress[book.id] || 0;
+    var total = book.pageCount || 1;
+    var pct = Math.round(prog / total * 100);
+    var card = D.createElement('div');
+    card.className = 'snr-book-card';
+
+    var del = D.createElement('div');
+    del.className = 'snr-book-del';
+    del.setAttribute('data-id', book.id);
+    del.textContent = '✕';
+
+    var cover = D.createElement('div');
+    cover.className = 'snr-book-cover';
+    cover.style.background = BOOK_COLORS[i % BOOK_COLORS.length];
+    cover.textContent = '📖';
+
+    var name = D.createElement('div');
+    name.className = 'snr-book-name';
+    name.textContent = book.title;
+
+    var pctEl = D.createElement('div');
+    pctEl.className = 'snr-book-pct';
+    pctEl.textContent = prog > 0 ? pct + '%' : '未读';
+
+    card.appendChild(del);
+    card.appendChild(cover);
+    card.appendChild(name);
+    card.appendChild(pctEl);
+
+    card.onclick = function (e) {
+      if (e.target.closest && e.target.closest('.snr-book-del')) return;
+      openBook(book.id);
+    };
+    del.onclick = function (e) {
+      e.stopPropagation();
+      if (P.confirm('删除《' + book.title + '》？')) { deleteBook(book.id); render(); }
+    };
+    grid.appendChild(card);
+  });
+  shelf.appendChild(grid);
+}
+root.appendChild(shelf);
+```
+
+}
+
+// ─── 阅读器 ───────────────────────────────────────────────
+function renderReader() {
+var tb = D.createElement(‘div’);
+tb.id = ‘snr-topbar’; tb.className = ‘snr-topbar’;
+var book = S.books.find(function (b) { return b.id === S.currentBookId; });
+
+```
+var backBtn = D.createElement('button');
+backBtn.className = 'snr-tbtn';
+backBtn.textContent = '←';
+backBtn.onclick = closeBook;
+
+var title = D.createElement('div');
+title.className = 'snr-topbar-title';
+title.textContent = book ? book.title : '';
+
+var pageNum = D.createElement('span');
+pageNum.id = 'snr-page-num'; pageNum.className = 'snr-page-num';
+pageNum.textContent = (S.currentPage + 1) + '/' + S.pages.length;
+
+var bmBtn = D.createElement('button');
+bmBtn.id = 'snr-bm-btn'; bmBtn.className = 'snr-tbtn';
+bmBtn.textContent = isBookmarked() ? '🔖' : '🏷️';
+bmBtn.onclick = toggleBookmark;
+
+var gearBtn = D.createElement('button');
+gearBtn.className = 'snr-tbtn';
+gearBtn.textContent = '⚙️';
+gearBtn.onclick = function () { openSettings(); };
+
+// 收起面板按钮
+var cp = D.createElement('button');
+cp.className = 'snr-close-panel';
+cp.textContent = '›';
+cp.title = '收起';
+cp.onclick = closePanel;
+
+tb.appendChild(backBtn);
+tb.appendChild(title);
+tb.appendChild(pageNum);
+tb.appendChild(bmBtn);
+tb.appendChild(gearBtn);
+tb.appendChild(cp);
+root.appendChild(tb);
+
+var content = D.createElement('div');
+content.id = 'snr-content'; content.className = 'snr-content';
+var lines = curPage().split('\n').filter(Boolean);
+content.innerHTML = lines.map(function (l) { return '<p>' + esc(l) + '</p>'; }).join('');
+swipe(content);
+root.appendChild(content);
+
+var nav = D.createElement('div');
+nav.id = 'snr-page-nav'; nav.className = 'snr-page-nav';
+
+var prevBtn = D.createElement('button');
+prevBtn.id = 'snr-prev'; prevBtn.className = 'snr-nav-btn';
+prevBtn.textContent = '← 上一页';
+prevBtn.disabled = S.currentPage === 0;
+prevBtn.onclick = function () { goToPage(S.currentPage - 1); };
+
+var nextBtn = D.createElement('button');
+nextBtn.id = 'snr-next'; nextBtn.className = 'snr-nav-btn';
+nextBtn.textContent = '下一页 →';
+nextBtn.disabled = S.currentPage >= S.pages.length - 1;
+nextBtn.onclick = function () { goToPage(S.currentPage + 1); };
+
+nav.appendChild(prevBtn); nav.appendChild(nextBtn);
+root.appendChild(nav);
+
+var ca = D.createElement('div');
+ca.id = 'snr-char-area';
+ca.className = 'snr-char-area' + (S.charHidden ? ' snr-char-hidden' : '');
+root.appendChild(ca);
+buildCharArea(ca);
+
+if (S.plusOpen)    root.appendChild(buildPlusTray());
+if (S.thoughtsOpen) root.appendChild(buildThoughtsPanel());
+
+root.appendChild(buildInputBar());
+cleanLPMenu();
+buildLPMenu();
+```
+
+}
+
+function cleanLPMenu() {
+var ov = D.getElementById(‘snr-lp-ov’), sh = D.getElementById(‘snr-lp-sh’);
+if (ov) ov.remove(); if (sh) sh.remove();
+}
+
+// ─── 角色区 ───────────────────────────────────────────────
+function buildCharArea(el) {
+el.innerHTML = ‘’;
+var wrap = D.createElement(‘div’);
+wrap.className = ‘snr-avatar-wrap’;
+var avatarEl;
+if (S.charInfo && S.charInfo.avatarUrl) {
+avatarEl = D.createElement(‘img’);
+avatarEl.className = ‘snr-avatar’;
+avatarEl.src = S.charInfo.avatarUrl;
+avatarEl.alt = S.charInfo.name;
+avatarEl.onerror = function () {
+var ph = makePh();
+if (avatarEl.parentNode) avatarEl.parentNode.replaceChild(ph, avatarEl);
+};
+} else {
+avatarEl = makePh();
+}
+attachLongPress(avatarEl);
+wrap.appendChild(avatarEl);
+el.appendChild(wrap);
+
+```
+if (S.bubbleLoading || S.bubbleText) {
+  var bubble = D.createElement('div');
+  bubble.className = 'snr-bubble';
+  if (S.bubbleLoading) {
+    bubble.innerHTML = '<div class="snr-dots"><span></span><span></span><span></span></div>';
+  } else {
+    bubble.textContent = S.bubbleText;
+  }
+  el.appendChild(bubble);
+}
+```
+
+}
+
+function makePh() {
+var ph = D.createElement(‘div’);
+ph.className = ‘snr-avatar-ph’;
+ph.textContent = (S.charInfo && S.charInfo.name) ? S.charInfo.name[0] : ‘?’;
+return ph;
+}
+
+function updateCharArea() {
+var el = D.getElementById(‘snr-char-area’); if (!el) return;
+el.className = ‘snr-char-area’ + (S.charHidden ? ’ snr-char-hidden’ : ‘’);
+buildCharArea(el);
+}
+
+// ─── 长按菜单 ─────────────────────────────────────────────
+function attachLongPress(el) {
+var t;
+var start = function () { t = setTimeout(openLPMenu, 550); };
+var cancel = function () { clearTimeout(t); };
+el.addEventListener(‘touchstart’, start, { passive: true });
+el.addEventListener(‘touchend’, cancel);
+el.addEventListener(‘touchmove’, cancel);
+el.addEventListener(‘mousedown’, start);
+el.addEventListener(‘mouseup’, cancel);
+el.addEventListener(‘mouseleave’, cancel);
+}
+
+function buildLPMenu() {
+var ov = D.createElement(‘div’);
+ov.id = ‘snr-lp-ov’;
+ov.className = ‘snr-lp-overlay’ + (S.lpMenuOpen ? ’ on’ : ‘’);
+ov.onclick = closeLPMenu;
+
+```
+var sh = D.createElement('div');
+sh.id = 'snr-lp-sh';
+sh.className = 'snr-lp-sheet' + (S.lpMenuOpen ? ' on' : '');
+
+var handle = D.createElement('div');
+handle.className = 'snr-lp-handle';
+sh.appendChild(handle);
+
+var hideItem = D.createElement('div');
+hideItem.className = 'snr-lp-item'; hideItem.id = 'snr-lp-hide';
+hideItem.innerHTML = '<span class="snr-lp-item-icon">' + (S.charHidden ? '👁️' : '🙈') + '</span><span>' + (S.charHidden ? '显示头像与气泡' : '隐藏头像与气泡') + '</span>';
+hideItem.onclick = function () {
+  S.charHidden = !S.charHidden;
+  Store.set('charHidden', S.charHidden);
+  closeLPMenu(); updateCharArea();
+};
+
+var pageItem = D.createElement('div');
+pageItem.className = 'snr-lp-item'; pageItem.id = 'snr-lp-page';
+pageItem.innerHTML = '<span class="snr-lp-item-icon">📄</span><span>发送本页给' + esc(charName()) + '</span>';
+pageItem.onclick = function () { sendPageToChar(false); };
+
+var allItem = D.createElement('div');
+allItem.className = 'snr-lp-item'; allItem.id = 'snr-lp-all';
+allItem.innerHTML = '<span class="snr-lp-item-icon">📚</span><span>发送本页及之前全部内容</span>';
+allItem.onclick = function () { sendPageToChar(true); };
+
+sh.appendChild(hideItem); sh.appendChild(pageItem); sh.appendChild(allItem);
+D.body.appendChild(ov); D.body.appendChild(sh);
+```
+
+}
+
+function openLPMenu() {
+S.lpMenuOpen = true;
+var ov = D.getElementById(‘snr-lp-ov’), sh = D.getElementById(‘snr-lp-sh’);
+if (ov) ov.classList.add(‘on’);
+if (sh) { sh.classList.add(‘on’); } else { cleanLPMenu(); buildLPMenu(); openLPMenu(); }
+}
+
+function closeLPMenu() {
+S.lpMenuOpen = false;
+var ov = D.getElementById(‘snr-lp-ov’), sh = D.getElementById(‘snr-lp-sh’);
+if (ov) ov.classList.remove(‘on’);
+if (sh) sh.classList.remove(‘on’);
+}
+
+// ─── 加号托盘 ─────────────────────────────────────────────
+function buildPlusTray() {
+var tray = D.createElement(‘div’);
+tray.className = ‘snr-plus-tray’;
+
+```
+var thoughtItem = D.createElement('div');
+thoughtItem.className = 'snr-plus-item';
+thoughtItem.innerHTML = '<div class="snr-plus-item-icon">💭</div><div class="snr-plus-item-label">内心想法</div>';
+thoughtItem.onclick = function () {
+  S.plusOpen = false; S.thoughtsOpen = true;
+  renderReader(); loadThoughts();
+};
+
+var bmItem = D.createElement('div');
+bmItem.className = 'snr-plus-item';
+bmItem.innerHTML = '<div class="snr-plus-item-icon">🔖</div><div class="snr-plus-item-label">书签列表</div>';
+bmItem.onclick = function () { S.plusOpen = false; openSettings(); };
+
+tray.appendChild(thoughtItem); tray.appendChild(bmItem);
+return tray;
+```
+
+}
+
+// ─── 内心独白 ─────────────────────────────────────────────
+function buildThoughtsPanel() {
+var p = D.createElement(‘div’);
+p.className = ‘snr-thoughts’;
+p.innerHTML = ‘<div class="snr-thoughts-label">💭 ’ + esc(charName()) + ’ 的内心深处</div><div class="snr-thoughts-text" id="snr-thoughts-body"><span style="color:#c0b0a0;font-style:normal">思绪流淌中…</span></div>’;
+return p;
+}
+
+async function loadThoughts() {
+var el = D.getElementById(‘snr-thoughts-body’); if (!el) return;
+el.innerHTML = ‘<div class="snr-dots" style="justify-content:flex-start"><span></span><span></span><span></span></div>’;
+var r = await generateThoughts();
+var el2 = D.getElementById(‘snr-thoughts-body’);
+if (el2) el2.textContent = r;
+}
+
+// ─── 输入栏 ───────────────────────────────────────────────
+function buildInputBar() {
+var bar = D.createElement(‘div’);
+bar.className = ‘snr-inputbar’;
+
+```
+var voiceBtn = D.createElement('button');
+voiceBtn.className = 'snr-ibtn'; voiceBtn.textContent = '🎤';
+voiceBtn.onclick = function () { toast('语音功能开发中'); };
+
+var input = D.createElement('input');
+input.className = 'snr-input'; input.id = 'snr-input';
+input.placeholder = '和' + charName() + '说点什么…';
+input.addEventListener('keydown', function (e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }
+});
+
+var emojiBtn = D.createElement('button');
+emojiBtn.className = 'snr-ibtn'; emojiBtn.textContent = '😊';
+emojiBtn.onclick = function () { toast('表情功能开发中'); };
+
+var plusBtn = D.createElement('button');
+plusBtn.className = 'snr-ibtn' + (S.plusOpen ? ' active' : '');
+plusBtn.textContent = '＋';
+plusBtn.onclick = function () {
+  S.plusOpen = !S.plusOpen; S.thoughtsOpen = false; renderReader();
+};
+
+var sendBtn = D.createElement('button');
+sendBtn.className = 'snr-send-btn'; sendBtn.textContent = '➤';
+sendBtn.onclick = handleSend;
+
+bar.appendChild(voiceBtn); bar.appendChild(input); bar.appendChild(emojiBtn);
+bar.appendChild(plusBtn); bar.appendChild(sendBtn);
+return bar;
+```
+
+}
+
+// ─── 发送 ─────────────────────────────────────────────────
+async function handleSend() {
+var input = D.getElementById(‘snr-input’); if (!input) return;
+var msg = input.value.trim(); if (!msg) return;
+input.value = ‘’;
+S.plusOpen = false; S.thoughtsOpen = false;
+S.bubbleLoading = true; S.bubbleText = ‘’;
+updateCharArea();
+var reply = await generateChat(msg);
+S.bubbleLoading = false; S.bubbleText = reply;
+updateCharArea();
+}
+
+// ─── 局部更新 ─────────────────────────────────────────────
+function renderReaderContent() {
+var el = D.getElementById(‘snr-content’); if (!el) return;
+var lines = curPage().split(’\n’).filter(Boolean);
+el.innerHTML = lines.map(function (l) { return ‘<p>’ + esc(l) + ‘</p>’; }).join(’’);
+el.scrollTop = 0;
+}
+function updatePageNav() {
+var prev = D.getElementById(‘snr-prev’), next = D.getElementById(‘snr-next’);
+if (prev) prev.disabled = S.currentPage === 0;
+if (next) next.disabled = S.currentPage >= S.pages.length - 1;
+}
+function updateTopPageNum() {
+var el = D.getElementById(‘snr-page-num’);
+if (el) el.textContent = (S.currentPage + 1) + ‘/’ + S.pages.length;
+}
+function updateBmBtn() {
+var el = D.getElementById(‘snr-bm-btn’);
+if (el) el.textContent = isBookmarked() ? ‘🔖’ : ‘🏷️’;
+}
+
+// ═══════════════════════════════════════════════════════════
+//  设置 Modal
+// ═══════════════════════════════════════════════════════════
+function openSettings(silent) {
+S.settingsOpen = true;
+var ex = D.getElementById(‘snr-modal-bg’); if (ex) ex.remove();
+
+```
+var bg = D.createElement('div');
+bg.id = 'snr-modal-bg'; bg.className = 'snr-modal-bg';
+bg.onclick = function (e) { if (e.target === bg) closeSettings(); };
+
+var modal = D.createElement('div');
+modal.className = 'snr-modal';
+
+var ch   = S.charInfo;
+var book = S.books.find(function (b) { return b.id === S.currentBookId; });
+var mems = book ? (S.memories[book.id] || []) : [];
+var bms  = book ? (S.bookmarks[book.id] || []) : [];
+
+// 标题栏
+var hd = D.createElement('div'); hd.className = 'snr-modal-hd';
+var ttl = D.createElement('div'); ttl.className = 'snr-modal-ttl'; ttl.textContent = '⚙️ 设置';
+var xBtn = D.createElement('button'); xBtn.className = 'snr-modal-x'; xBtn.textContent = '✕'; xBtn.onclick = closeSettings;
+hd.appendChild(ttl); hd.appendChild(xBtn);
+modal.appendChild(hd);
+
+// 角色区
+var charSec = D.createElement('div'); charSec.className = 'snr-sec';
+var charSecTtl = D.createElement('div'); charSecTtl.className = 'snr-sec-ttl'; charSecTtl.textContent = '当前角色';
+charSec.appendChild(charSecTtl);
+
+var charRow = D.createElement('div'); charRow.className = 'snr-char-row';
+if (ch) {
+  var avEl;
+  if (ch.avatarUrl) {
+    avEl = D.createElement('img'); avEl.className = 'snr-char-av'; avEl.src = ch.avatarUrl;
+    avEl.onerror = function () {
+      var ph = D.createElement('div');
+      ph.style.cssText = 'width:40px;height:40px;border-radius:50%;background:#c8b89a;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0';
+      ph.textContent = ch.name[0];
+      if (avEl.parentNode) avEl.parentNode.replaceChild(ph, avEl);
+    };
+  } else {
+    avEl = D.createElement('div');
+    avEl.style.cssText = 'width:40px;height:40px;border-radius:50%;background:#c8b89a;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0';
+    avEl.textContent = ch.name[0];
+  }
+  charRow.appendChild(avEl);
+  var infoDiv = D.createElement('div');
+  var nameDiv = D.createElement('div'); nameDiv.className = 'snr-char-name'; nameDiv.textContent = ch.name;
+  var subDiv  = D.createElement('div'); subDiv.className = 'snr-char-sub';  subDiv.textContent = '使用酒馆当前 API · 自动同步记忆';
+  infoDiv.appendChild(nameDiv); infoDiv.appendChild(subDiv);
+  charRow.appendChild(infoDiv);
+} else {
+  var noCharDiv = D.createElement('div');
+  noCharDiv.style.cssText = 'color:#a09080;font-size:13px';
+  noCharDiv.textContent = '请先在酒馆中选择角色';
+  charRow.appendChild(noCharDiv);
+}
+charSec.appendChild(charRow);
+
+var refreshBtn = D.createElement('button'); refreshBtn.className = 'snr-btn-ghost';
+refreshBtn.textContent = '🔄 刷新角色信息';
+refreshBtn.onclick = function () { refreshChar(); toast('角色已刷新 ✓'); };
+charSec.appendChild(refreshBtn);
+modal.appendChild(charSec);
+
+// 导入区
+var importSec = D.createElement('div'); importSec.className = 'snr-sec';
+var importTtl = D.createElement('div'); importTtl.className = 'snr-sec-ttl'; importTtl.textContent = '导入书籍';
+importSec.appendChild(importTtl);
+
+var importLabel = D.createElement('label'); importLabel.className = 'snr-import-btn';
+importLabel.textContent = '📖 选择文本文件（.txt / .md）';
+var fileInput = D.createElement('input');
+fileInput.type = 'file'; fileInput.accept = '.txt,.md'; fileInput.style.display = 'none';
+fileInput.onchange = async function (e) {
+  var file = e.target.files[0]; if (!file) return;
+  toast('正在导入…');
+  var importedBook = await importBook(file);
+  closeSettings();
+  if (S.view === 'shelf') render();
+  toast('《' + importedBook.title + '》导入成功！共 ' + importedBook.pageCount + ' 页 ✓');
+};
+importLabel.appendChild(fileInput);
+importSec.appendChild(importLabel);
+modal.appendChild(importSec);
+
+// 书签区
+if (book) {
+  var bmSec = D.createElement('div'); bmSec.className = 'snr-sec';
+  var bmTtl = D.createElement('div'); bmTtl.className = 'snr-sec-ttl'; bmTtl.textContent = '书签 · ' + bms.length + ' 个';
+  bmSec.appendChild(bmTtl);
+  if (!bms.length) {
+    var noBm = D.createElement('div'); noBm.style.cssText = 'color:#a09080;font-size:12px';
+    noBm.textContent = '暂无书签，阅读时点击顶栏 🏷️ 添加';
+    bmSec.appendChild(noBm);
+  } else {
+    bms.forEach(function (p) {
+      var bmItem = D.createElement('div'); bmItem.className = 'snr-bm-item';
+      bmItem.innerHTML = '<span>📌 第 ' + (p + 1) + ' 页</span><span style="font-size:11px;color:#a09080">→ 跳转</span>';
+      bmItem.onclick = function () { closeSettings(); goToPage(p); };
+      bmSec.appendChild(bmItem);
+    });
+  }
+  modal.appendChild(bmSec);
+
+  // 记忆区
+  var memSec = D.createElement('div'); memSec.className = 'snr-sec';
+  var memTtl = D.createElement('div'); memTtl.className = 'snr-sec-ttl'; memTtl.textContent = '阅读记忆 · ' + mems.length + ' 条';
+  memSec.appendChild(memTtl);
+  if (!mems.length) {
+    var noMem = D.createElement('div'); noMem.style.cssText = 'color:#a09080;font-size:12px';
+    noMem.textContent = '暂无记忆，长按头像发送内容给角色后生成';
+    memSec.appendChild(noMem);
+  } else {
+    mems.slice().reverse().forEach(function (m) {
+      var memItem = D.createElement('div'); memItem.className = 'snr-mem-item';
+      var meta = D.createElement('div'); meta.className = 'snr-mem-meta';
+      meta.textContent = (m.type === 'cumulative' ? '📚 累计' : '📄 本页') + ' · 第 ' + (m.page + 1) + ' 页 · ' + fmtT(m.ts);
+      var body = D.createElement('div'); body.className = 'snr-mem-body'; body.textContent = m.content;
+      memItem.appendChild(meta); memItem.appendChild(body);
+      memSec.appendChild(memItem);
+    });
+  }
+  modal.appendChild(memSec);
+}
+
+bg.appendChild(modal);
+D.body.appendChild(bg);
+```
+
+}
+
+function closeSettings() {
+S.settingsOpen = false;
+var el = D.getElementById(‘snr-modal-bg’); if (el) el.remove();
+}
+
+// ═══════════════════════════════════════════════════════════
+//  初始化（挂载到 parent document.body）
+// ═══════════════════════════════════════════════════════════
+function init() {
+injectCSS();
+
+```
+// ── FAB 触发按钮 ────────────────────────────────────────
+fab = D.createElement('button');
+fab.id = FAB_ID;
+fab.textContent = '📚';
+fab.title = '打开伴读器';
+// 内联兜底：CSS可能被延迟或覆盖
+fab.style.setProperty('position',        'fixed',      'important');
+fab.style.setProperty('right',           '12px',       'important');
+fab.style.setProperty('bottom',          '88px',       'important');
+fab.style.setProperty('width',           '46px',       'important');
+fab.style.setProperty('height',          '46px',       'important');
+fab.style.setProperty('border-radius',   '50%',        'important');
+fab.style.setProperty('background',      '#6b5545',    'important');
+fab.style.setProperty('color',           '#fff',       'important');
+fab.style.setProperty('border',          'none',       'important');
+fab.style.setProperty('font-size',       '20px',       'important');
+fab.style.setProperty('z-index',         '2147483647', 'important');
+fab.style.setProperty('cursor',          'pointer',    'important');
+fab.style.setProperty('box-shadow',      '0 3px 14px rgba(0,0,0,0.30)', 'important');
+fab.style.setProperty('display',         'flex',       'important');
+fab.style.setProperty('align-items',     'center',     'important');
+fab.style.setProperty('justify-content', 'center',     'important');
+fab.onclick = togglePanel;
+
+// ── 侧边面板 ────────────────────────────────────────────
+root = D.createElement('div');
+root.id = ROOT_ID;
+root.style.setProperty('position',        'fixed',      'important');
+root.style.setProperty('top',             '0',          'important');
+root.style.setProperty('right',           '0',          'important');
+root.style.setProperty('bottom',          '0',          'important');
+root.style.setProperty('left',            'auto',       'important');
+root.style.setProperty('width',           '320px',      'important');
+root.style.setProperty('max-width',       '88vw',       'important');
+root.style.setProperty('z-index',         '2147483646', 'important');
+root.style.setProperty('transform',       'translateX(100%)', 'important');
+root.style.setProperty('transition',      'transform .3s cubic-bezier(.4,0,.2,1)', 'important');
+root.style.setProperty('display',         'flex',       'important');
+root.style.setProperty('flex-direction',  'column',     'important');
+root.style.setProperty('background',      '#f7f2eb',    'important');
+root.style.setProperty('overflow',        'hidden',     'important');
+root.style.setProperty('color',           '#2c2520',    'important');
+root.style.setProperty('box-shadow',      '-4px 0 24px rgba(0,0,0,0.18)', 'important');
+root.style.setProperty('font-family',     '"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif', 'important');
+
+// 挂载到 body（比 documentElement 更稳定，且不怕 ST body 被清空）
+D.body.appendChild(fab);
+D.body.appendChild(root);
+
+finishInit();
+```
+
+}
+
+function finishInit() {
+S.charInfo = getCharInfo();
+S.books.forEach(function (b) {
+if (!b.pageCount && b.content) b.pageCount = splitPages(b.content).length;
+});
+render();
+console.log(’[ST小说伴读器 v2.0] 已启动 ✓ — 点击右下角📚按钮打开面板’);
+
+```
+// ── 守护：被 ST 框架移除时自动重新挂载 ─────────────────
+var reattachFab  = function () { if (!D.body.contains(fab))  D.body.appendChild(fab); };
+var reattachRoot = function () { if (!D.body.contains(root)) D.body.appendChild(root); };
+var guard = new MutationObserver(function () { reattachFab(); reattachRoot(); });
+guard.observe(D.body, { childList: true });
+```
+
+}
+
+// ── 启动 ────────────────────────────────────────────────────
+if (D.readyState === ‘complete’ || D.readyState === ‘interactive’) {
+setTimeout(init, 500);
+} else {
+P.addEventListener(‘load’, function () { setTimeout(init, 500); });
+}
+
+})();
