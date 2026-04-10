@@ -32,6 +32,7 @@ const STICKER_KEY  = "stThtrStickerList";
 const CHAR_KEY     = "stThtrCharOverrides";
 const REMARK_KEY   = "stThtrRemarks";
 const STATUS_LOG_KEY = "stThtrStatusLog";
+const PRESET_KEY     = "stThtrPresets";
 
 let apiSettings = { url: "", key: "", model: "" };
 let genSettings = {
@@ -67,6 +68,14 @@ let stickerList = [];
 let charOverrides = {};
 let charRemarks   = {};
 let statusLog     = {};
+let presetsData = [{id:"preset_default",name:"绥玉の预设",modules:[
+{id:"pmod_rules",name:"规则",role:"system",enabled:true,content:"[SYSTEM NOTICE]\nThe following rules govern all AI output in this session. Full compliance is mandatory."},
+{id:"pmod_emotion",name:"情感逻辑",role:"system",enabled:true,content:"[CHARACTER LOGIC — STRICT COMPLIANCE]\n# Emotional Logic\n\nEmotional shifts must have cost and buildup:\n- No complete arc (resistance→moved) within a single exchange\n- Softening is allowed, but gradual — not a flood\n- Characters hold their own worldview; a \"correct\" argument won't dismantle it instantly. Morally skewed characters may dismiss it, or lash out when hit too close\n\n# No Emotional Closure\n\nForbid tidy resolution. Human desire has no natural endpoint — contentment is rare and fragile. A character may say \"I like this moment\" but will not stop wanting. Genuine satisfaction is the exception, not the default.\n\n# Emotional Realism\n\nReal people in emotional states:\n- Hold contradictions — being moved and resistant at the same time\n- May respond to vulnerability with aggression (character-dependent)\n- May go silent / deflect / rationalize / spiral / linger in conflict\n\nEmotional expression must follow this logic — not resolve into a clean, closed arc."},
+{id:"pmod_depth",name:"角色深度",role:"system",enabled:true,content:"[Character Depth]\nA character's traits are tendencies, not scripts. The same situation produces different reactions depending on history and accumulated experience.\n\nA person praised once blushes. Praised a hundred times, they shrug. A person insulted once snaps back. Insulted ten thousand times, they go numb — or break — or stop caring entirely. It depends on who they are.\n\nLet characters evolve dynamically within their personality. Never reduce them to a template."},
+{id:"pmod_lang",name:"语言规范",role:"system",enabled:true,content:"[Language & Style]\n# Prose Quality\n\n- Prefer concrete, specific detail over vague sentiment\n- Show internal state through behavior and word choice, not direct emotional labels\n- Vary sentence length; short sentences for impact, longer ones for texture\n\n# Dialogue\n\n- Dialogue should sound like the character, not a summary of their feelings\n- Subtext is preferred; characters rarely say exactly what they mean\n- Interruptions, deflections, and silences are valid dialogue moves\n\n# Restraint\n\n- Do not over-explain reactions. Trust the scene.\n- Avoid purple prose. Intensity comes from precision, not density.\n- One strong image outweighs three decorative ones."},
+{id:"pmod_check",name:"末尾强调",role:"system",enabled:true,content:"Before finalizing output, verify:\n1. Does this fit the character's logic?\n2. Does this reflect genuine emotional realism?\n3. Is the character reduced to a stereotype or flat label?\n4. Is the situation framed in binary black-and-white terms?\n\nIf any of the above apply — revise before outputting."}
+]}];
+let activePresetId = "preset_default";
 
 function loadStorage() {
 try {
@@ -87,6 +96,8 @@ const sl = GM_getValue(STICKER_KEY, null); if (sl && Array.isArray(sl)) stickerL
 const co = GM_getValue(CHAR_KEY, null);    if (co && typeof co==="object") charOverrides = co;
 const cr = GM_getValue(REMARK_KEY, null);  if (cr && typeof cr==="object") charRemarks = cr;
 const sl2= GM_getValue(STATUS_LOG_KEY,null); if(sl2 && typeof sl2==="object") statusLog = sl2;
+const pd = GM_getValue(PRESET_KEY, null);
+if (pd && pd.presets && Array.isArray(pd.presets)) { presetsData = pd.presets; activePresetId = pd.activeId || presetsData[0]?.id || ""; }
 } catch(_) {}
 }
 function saveApiSettings()  { try { GM_setValue(API_KEY,   apiSettings);  } catch(_){} }
@@ -100,10 +111,11 @@ const t={}; for(const k in statusLog) t[k]=(statusLog[k]||[]).slice(-50);
 statusLog=t; try{GM_setValue(STATUS_LOG_KEY,statusLog);}catch(_){}
 }
 function saveChatLogs() {
-const t={}; for(const k in chatLogs) t[k]=chatLogs[k].slice(-50000);
+const t={}; for(const k in chatLogs) t[k]=chatLogs[k].slice(-10000000);
 chatLogs=t; try{GM_setValue(CHAT_KEY,chatLogs);}catch(_){}
 }
 loadStorage();
+function savePresets() { try { GM_setValue(PRESET_KEY, {presets: presetsData, activeId: activePresetId}); } catch(_) {} }
 
 /* ── 动态 CSS ── */
 const styleEl = D.createElement("style"); styleEl.id = "stThtrStyle"; D.head.appendChild(styleEl);
@@ -609,6 +621,50 @@ scrollbar-width:thin;scrollbar-color:#e0e0e0 transparent;
 #stThtrNoticeHdrTitle{font-size:14px;font-weight:600;color:#111;}
 #stThtrNoticeHdrSub{font-size:10px;color:#bbb;letter-spacing:.06em;text-transform:uppercase;}
 #stThtrNoticeBody{padding:14px 16px 20px;font-size:13px;color:#333;line-height:1.9;white-space:pre-wrap;word-break:break-word;}
+#stPresetHdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;padding-bottom:8px;border-bottom:1px solid rgba(255,255,255,.08);}
+#stPresetApplyStatus{font-size:10px;color:rgba(140,220,140,.8);min-height:14px;margin-bottom:4px;transition:opacity .3s;}
+.stPresetCard{background:rgba(255,255,255,.045);border:1px solid rgba(255,255,255,.09);border-radius:11px;margin-bottom:7px;overflow:hidden;transition:border-color .15s;}
+.stPresetCard.stPresetActive{border-color:rgba(100,180,255,.45);}
+.stPresetCardHdr{display:flex;align-items:center;gap:6px;padding:8px 10px;cursor:pointer;user-select:none;}
+.stPresetCardHdrName{flex:1;font-size:11.5px;color:rgba(255,255,255,.82);font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.stPresetActiveBadge{font-size:9px;background:rgba(100,180,255,.2);color:rgba(130,200,255,.9);padding:1px 6px;border-radius:4px;border:1px solid rgba(100,180,255,.28);flex-shrink:0;}
+.stPresetCardArrow{font-size:9px;color:rgba(255,255,255,.28);transition:transform .18s;flex-shrink:0;}
+.stPresetCard.stPresetExpanded .stPresetCardArrow{transform:rotate(90deg);}
+.stPresetCardBtns{display:flex;gap:3px;flex-shrink:0;}
+.stPresetCardBtn{background:none;border:1px solid rgba(255,255,255,.11);color:rgba(255,255,255,.38);font-size:9.5px;border-radius:5px;padding:1px 6px;cursor:pointer;transition:all .12s;line-height:1.5;}
+.stPresetCardBtn:hover{background:rgba(255,255,255,.09);color:rgba(255,255,255,.78);}
+.stPresetCardBtn.danger:hover{background:rgba(220,60,60,.14);border-color:rgba(220,60,60,.3);color:rgba(255,110,110,.9);}
+.stPresetModules{padding:2px 8px 8px;border-top:1px solid rgba(255,255,255,.05);display:none;}
+.stPresetCard.stPresetExpanded .stPresetModules{display:block;}
+.stPresetMod{display:flex;align-items:center;gap:5px;padding:5px 4px;border-radius:7px;cursor:default;transition:background .12s;}
+.stPresetMod.stDragging{opacity:.35;}
+.stPresetMod.stDragOver{background:rgba(100,180,255,.07);border-radius:7px;}
+.stPresetModHandle{display:flex;gap:1px;flex-shrink:0;}
+.stPresetModHandle .stPresetModBtn{padding:1px 4px;font-size:9px;}
+.stPresetModHandle .stPresetModBtn:disabled{opacity:.18;cursor:default;}
+.stPresetModCheck{width:13px;height:13px;cursor:pointer;flex-shrink:0;accent-color:rgba(130,200,255,.9);}
+.stPresetModName{flex:1;font-size:11px;color:rgba(255,255,255,.72);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.stPresetRoleBadge{font-size:8.5px;padding:1px 5px;border-radius:4px;flex-shrink:0;letter-spacing:.03em;}
+.stPresetRoleBadge.system{background:rgba(180,100,255,.18);color:rgba(200,150,255,.9);border:1px solid rgba(180,100,255,.22);}
+.stPresetRoleBadge.user{background:rgba(80,200,120,.14);color:rgba(110,230,150,.9);border:1px solid rgba(80,200,120,.2);}
+.stPresetRoleBadge.assistant{background:rgba(255,180,70,.14);color:rgba(255,205,100,.9);border:1px solid rgba(255,180,70,.2);}
+.stPresetModBtn{background:none;border:none;color:rgba(255,255,255,.25);font-size:11px;cursor:pointer;padding:1px 3px;border-radius:4px;line-height:1;transition:color .12s;flex-shrink:0;}
+.stPresetModBtn:hover{color:rgba(255,255,255,.72);}
+.stPresetAddMod{font-size:10.5px;color:rgba(100,180,255,.55);background:none;border:1px dashed rgba(100,180,255,.18);border-radius:7px;width:100%;padding:5px;cursor:pointer;margin-top:5px;transition:all .15s;font-family:inherit;}
+.stPresetAddMod:hover{background:rgba(100,180,255,.06);color:rgba(140,210,255,.85);}
+#stPresetModal{position:fixed;z-index:2147483649;display:none;pointer-events:none;}
+#stPresetModal.stPOpen{display:block;pointer-events:auto;}#stPresetModalBox{background:#15152a;border:1px solid rgba(255,255,255,.14);border-radius:16px;padding:18px 16px 14px;width:min(290px,88vw);max-height:82vh;overflow-y:auto;color:#fff;box-shadow:0 20px 60px rgba(0,0,0,.5);}
+.stPModalTitle{font-size:13px;font-weight:600;margin-bottom:12px;color:rgba(255,255,255,.9);}
+.stPFormLabel{font-size:10px;color:rgba(255,255,255,.4);letter-spacing:.07em;margin:10px 0 4px;}
+.stPFormInput{width:100%;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.13);border-radius:8px;color:rgba(255,255,255,.9);font-size:12px;font-family:inherit;padding:7px 9px;box-sizing:border-box;outline:none;transition:border-color .15s;}
+.stPFormInput:focus{border-color:rgba(100,180,255,.4);}
+.stPFormSelect{width:100%;background:rgba(18,18,36,.95);border:1px solid rgba(255,255,255,.13);border-radius:8px;color:rgba(255,255,255,.85);font-size:12px;padding:7px 9px;box-sizing:border-box;outline:none;cursor:pointer;}
+.stPFormTA{width:100%;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.13);border-radius:8px;color:rgba(255,255,255,.88);font-size:11px;font-family:inherit;padding:7px 9px;box-sizing:border-box;resize:vertical;outline:none;line-height:1.6;min-height:110px;transition:border-color .15s;}
+.stPFormTA:focus{border-color:rgba(100,180,255,.4);}
+.stPFormBtns{display:flex;gap:8px;margin-top:14px;}
+.stPFormSave{flex:1;background:rgba(100,180,255,.18);border:1px solid rgba(100,180,255,.32);color:rgba(180,220,255,.95);font-size:12px;border-radius:8px;padding:8px;cursor:pointer;font-family:inherit;transition:all .15s;}
+.stPFormSave:hover{background:rgba(100,180,255,.28);}
+.stPFormCancel{flex:1;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);color:rgba(255,255,255,.45);font-size:12px;border-radius:8px;padding:8px;cursor:pointer;font-family:inherit;}
 `;}
 
 /* ── 大小应用 ── */
@@ -775,6 +831,8 @@ apiPanelEl.innerHTML=`
 
 <div class="stThtrTabBar">
   <button class="stThtrTabBtn stThtrTabActive" data-tab="stThtrTabSettings">设置</button>
+<button class="stThtrTabBtn" data-tab="stThtrTabPreset">预设</button>
+
   <button class="stThtrTabBtn" data-tab="stThtrTabChar">角色</button>
   <button class="stThtrTabBtn" data-tab="stThtrTabMemory">记忆</button>
   <button class="stThtrTabBtn" data-tab="stThtrTabApi">接口</button>
@@ -880,8 +938,276 @@ apiPanelEl.innerHTML=`
   <div style="margin-top:18px;border-top:1px solid rgba(255,255,255,.08);padding-top:12px;">
     <div style="font-size:calc(9.5px * var(--st-font-scale));color:rgba(255,255,255,.22);line-height:1.7;">⚠ 载入备份将<span style="color:rgba(255,140,100,.7)">覆盖</span>当前所有数据，建议载入前先导出一份当前备份。</div>
   </div>
+</div>
+<div id="stThtrTabPreset" class="stThtrTabPane" style="display:none">
+  <div id="stPresetHdr">
+    <div>
+      <div style="font-size:9.5px;color:rgba(255,255,255,.35);letter-spacing:.06em;margin-bottom:2px;">当前激活</div>
+      <div id="stPresetActiveName" style="font-size:11.5px;color:rgba(130,200,255,.85);font-weight:500;">—</div>
+    </div>
+    <div style="display:flex;gap:5px;">
+      <button id="stPresetApplyBtn" class="stThtrApiSave" style="margin:0;padding:5px 11px;font-size:11px;width:auto;">✓ 应用</button>
+      <button id="stPresetExportBtn" class="stThtrApiSave" style="margin:0;padding:5px 11px;font-size:11px;width:auto;background:rgba(255,255,255,.07);">⬇</button>
+  </div>
+  </div>
+  <div id="stPresetApplyStatus"></div>
+  <div id="stPresetList"></div>
+  <button id="stPresetAddBtn" class="stThtrApiSave" style="width:100%;margin-top:6px;background:rgba(255,255,255,.05);">＋ 新建预设</button>
+</div>
 </div>`;
 D.body.appendChild(apiPanelEl);
+
+/* ── 预设 Modal ── */
+const presetModalEl = D.createElement("div");
+presetModalEl.id = "stPresetModal";
+presetModalEl.innerHTML = `
+<div id="stPresetModalBox">
+  <div class="stPModalTitle" id="stPModalTitle">新建预设</div>
+  <div class="stPFormLabel" id="stPNameLabel">预设名称</div>
+  <input id="stPName" class="stPFormInput" placeholder="输入名称">
+  <div id="stPModFields" style="display:none">
+    <div class="stPFormLabel">注入身份</div>
+    <select id="stPRole" class="stPFormSelect">
+      <option value="system">System（系统）</option>
+      <option value="user">User（用户）</option>
+      <option value="assistant">Assistant（角色）</option>
+    </select>
+    <div class="stPFormLabel">内容</div>
+    <textarea id="stPContent" class="stPFormTA" placeholder="模块内容..."></textarea>
+  </div>
+  <div class="stPFormBtns">
+    <button class="stPFormSave" id="stPModalSave">保存</button>
+    <button class="stPFormCancel" id="stPModalCancel">取消</button>
+  </div>
+</div>`;
+D.body.appendChild(presetModalEl);
+
+/* ── 预设系统 JS ── */
+(function(){
+  let _pmCb = null, _pmMode = "preset";
+
+  function uid(){ return "p"+Date.now().toString(36)+Math.random().toString(36).slice(2,6); }
+
+  function getActivePreset(){ return presetsData.find(p=>p.id===activePresetId)||null; }
+
+  /* 打开 Modal */
+  function openPModal(mode, initial, cb, triggerEl=null){
+    _pmMode=mode; _pmCb=cb;
+    const titleEl=D.getElementById("stPModalTitle"),nameEl=D.getElementById("stPName");
+    const modF=D.getElementById("stPModFields"),nameLabel=D.getElementById("stPNameLabel");
+    if(mode==="preset"){
+      titleEl.textContent=initial?.id?"重命名预设":"新建预设";
+      nameLabel.textContent="预设名称";
+      nameEl.value=initial?.name||"";
+      modF.style.display="none";
+    } else {
+      titleEl.textContent=initial?.id?"编辑模块":"新建模块";
+      nameLabel.textContent="模块名称";
+      nameEl.value=initial?.name||"";
+      D.getElementById("stPRole").value=initial?.role||"system";
+      D.getElementById("stPContent").value=initial?.content||"";
+      modF.style.display="block";
+    }
+      presetModalEl.classList.add("stPOpen");
+      const BW=300,W=window.parent.innerWidth,H=window.parent.innerHeight,BH_EST=Math.min(H*.72,520);
+    let left,top;
+    if(triggerEl){const r=triggerEl.getBoundingClientRect();left=r.left-BW-10;top=r.top-10;if(left<8)left=r.right+8;if(left+BW>W-8)left=W-BW-8;if(left<8)left=8;}
+    else{const ap=apiPanelEl.getBoundingClientRect();left=Math.max(8,ap.left-BW-8);if(left<8)left=ap.right+8;left=Math.max(8,Math.min(left,W-BW-8));top=ap.top+10;}
+    if(top===undefined)top=40;if(top+BH_EST>H-8)top=Math.max(8,H-BH_EST-8);if(top<8)top=8;
+    presetModalEl.style.left=left+"px";presetModalEl.style.top=top+"px";
+    setTimeout(()=>D.addEventListener("click",_closePModalOutside),0);
+    setTimeout(()=>nameEl.focus(),80);
+  }
+  D.getElementById("stPModalSave").addEventListener("click",()=>{
+    const nameEl=D.getElementById("stPName");
+    const name=(nameEl.value||"").trim();
+    if(!name)return;
+    let data={name};
+    if(_pmMode==="module"){
+      data.role=D.getElementById("stPRole").value;
+      data.content=D.getElementById("stPContent").value;
+    }
+    presetModalEl.classList.remove("stPOpen");
+    if(_pmCb)_pmCb(data);
+  });
+  D.getElementById("stPModalCancel").addEventListener("click",()=>{presetModalEl.classList.remove("stPOpen");});
+  function _closePModalOutside(e){if(!D.getElementById("stPresetModalBox").contains(e.target)){presetModalEl.classList.remove("stPOpen");D.removeEventListener("click",_closePModalOutside);}}
+
+  /* 渲染预设面板 */
+  function renderPresets(){
+    const listEl=D.getElementById("stPresetList");
+    const activeNameEl=D.getElementById("stPresetActiveName");
+    if(!listEl)return;
+    const ap=getActivePreset();
+    if(activeNameEl)activeNameEl.textContent=ap?ap.name:"—";
+    if(!presetsData.length){listEl.innerHTML='<div style="font-size:11px;color:rgba(255,255,255,.3);text-align:center;padding:16px 0;">暂无预设，点击下方新建</div>';return;}
+
+    listEl.innerHTML=presetsData.map(preset=>{
+      const isActive=preset.id===activePresetId;
+      const isExp=preset._expanded||isActive;
+      const mods=(preset.modules||[]);
+      const enabledCount=mods.filter(m=>m.enabled).length;
+      const modsHtml=mods.map((mod,idx)=>`
+        <div class="stPresetMod" data-pid="${preset.id}" data-mid="${mod.id}" data-idx="${idx}">
+          <span class="stPresetModHandle"><button class="stPresetModBtn stPModUp" data-pid="${preset.id}" data-idx="${idx}" ${idx===0?"disabled":""} title="上移">▲</button><button class="stPresetModBtn stPModDown" data-pid="${preset.id}" data-idx="${idx}" ${idx===mods.length-1?"disabled":""} title="下移">▼</button></span>
+          <input type="checkbox" class="stPresetModCheck stPModToggle" data-pid="${preset.id}" data-mid="${mod.id}" ${mod.enabled?"checked":""}>
+          <span class="stPresetModName" title="${escHtml(mod.name)}">${escHtml(mod.name)}</span>
+          <span class="stPresetRoleBadge ${mod.role}">${mod.role==="system"?"SYS":mod.role==="user"?"USR":"AST"}</span>
+          <button class="stPresetModBtn stPModEdit" data-pid="${preset.id}" data-mid="${mod.id}" title="编辑">✏</button>
+          <button class="stPresetModBtn stPModDel" data-pid="${preset.id}" data-mid="${mod.id}" title="删除">✕</button>
+        </div>`).join("");
+
+      return `<div class="stPresetCard${isActive?" stPresetActive":""}${isExp?" stPresetExpanded":""}" data-pid="${preset.id}">
+        <div class="stPresetCardHdr" data-pid="${preset.id}">
+          <span class="stPresetCardArrow">▶</span>
+          <span class="stPresetCardHdrName">${escHtml(preset.name)}</span>
+          ${isActive?'<span class="stPresetActiveBadge">激活</span>':`<span style="font-size:9.5px;color:rgba(255,255,255,.28);">${enabledCount}/${mods.length}</span>`}
+          <div class="stPresetCardBtns">
+            <button class="stPresetCardBtn stPRename" data-pid="${preset.id}" title="重命名">改名</button>
+            <button class="stPresetCardBtn stPActivate${isActive?" stPresetActiveBadge":""}" data-pid="${preset.id}" title="激活此预设">${isActive?"已激活":"激活"}</button>
+            <button class="stPresetCardBtn danger stPDel" data-pid="${preset.id}" title="删除预设">删除</button>
+          </div>
+        </div>
+        <div class="stPresetModules">
+          ${modsHtml}
+          <button class="stPresetAddMod stPAddMod" data-pid="${preset.id}">＋ 添加模块</button>
+        </div>
+      </div>`;
+    }).join("");
+
+    /* 绑定折叠/展开 */
+    listEl.querySelectorAll(".stPresetCardHdr").forEach(hdr=>{
+      hdr.addEventListener("click",e=>{
+        if(e.target.closest(".stPresetCardBtns"))return;
+        const pid=hdr.dataset.pid;
+        const p=presetsData.find(x=>x.id===pid);
+        if(p){p._expanded=!p._expanded;renderPresets();}
+      });
+    });
+
+    /* 激活 */
+    listEl.querySelectorAll(".stPActivate").forEach(btn=>{
+      btn.addEventListener("click",e=>{e.stopPropagation();const p=presetsData.find(x=>x.id===btn.dataset.pid);if(p){p._expanded=true;}activePresetId=btn.dataset.pid;savePresets();renderPresets();});
+    });
+
+    /* 重命名 */
+    listEl.querySelectorAll(".stPRename").forEach(btn=>{
+      btn.addEventListener("click",e=>{
+        e.stopPropagation();
+        const p=presetsData.find(x=>x.id===btn.dataset.pid);
+        if(!p)return;
+        openPModal("preset",p,({name})=>{p.name=name;savePresets();renderPresets();},btn);
+      });
+    });
+
+    /* 删除预设 */
+    listEl.querySelectorAll(".stPDel").forEach(btn=>{
+      btn.addEventListener("click",e=>{
+        e.stopPropagation();
+        const idx=presetsData.findIndex(x=>x.id===btn.dataset.pid);
+        if(idx===-1)return;
+        if(!confirm(`确定删除预设「${presetsData[idx].name}」？`))return;
+        if(activePresetId===presetsData[idx].id)activePresetId=presetsData[idx-1]?.id||presetsData[idx+1]?.id||"";
+        presetsData.splice(idx,1);savePresets();renderPresets();
+      });
+    });
+
+    /* 模块开关 */
+    listEl.querySelectorAll(".stPModToggle").forEach(cb=>{
+      cb.addEventListener("change",()=>{
+        const p=presetsData.find(x=>x.id===cb.dataset.pid);if(!p)return;
+        const m=(p.modules||[]).find(x=>x.id===cb.dataset.mid);if(m){m.enabled=cb.checked;savePresets();}
+      });
+    });
+
+    /* 模块编辑 */
+    listEl.querySelectorAll(".stPModEdit").forEach(btn=>{
+      btn.addEventListener("click",e=>{
+        e.stopPropagation();
+        const p=presetsData.find(x=>x.id===btn.dataset.pid);if(!p)return;
+        const m=(p.modules||[]).find(x=>x.id===btn.dataset.mid);if(!m)return;
+        openPModal("module",m,({name,role,content})=>{m.name=name;m.role=role;m.content=content;savePresets();renderPresets();},btn);
+      });
+    });
+
+    /* 模块删除 */
+    listEl.querySelectorAll(".stPModDel").forEach(btn=>{
+      btn.addEventListener("click",e=>{
+        e.stopPropagation();
+        const p=presetsData.find(x=>x.id===btn.dataset.pid);if(!p)return;
+        const idx=(p.modules||[]).findIndex(x=>x.id===btn.dataset.mid);
+        if(idx!==-1){p.modules.splice(idx,1);savePresets();renderPresets();}
+      });
+    });
+
+    /* 添加模块 */
+    listEl.querySelectorAll(".stPAddMod").forEach(btn=>{
+      btn.addEventListener("click",e=>{
+        e.stopPropagation();
+        const p=presetsData.find(x=>x.id===btn.dataset.pid);if(!p)return;
+        openPModal("module",{},({name,role,content})=>{
+        if(!p.modules)p.modules=[];
+          p.modules.push({id:uid(),name,role,enabled:true,content});
+          savePresets();renderPresets();
+        });
+      });
+    });
+
+       /* ▲▼ 排序 */
+    listEl.querySelectorAll(".stPModUp").forEach(btn=>{
+      btn.addEventListener("click",e=>{
+        e.stopPropagation();
+        const p=presetsData.find(x=>x.id===btn.dataset.pid);if(!p||!p.modules)return;
+        const idx=parseInt(btn.dataset.idx,10);if(idx<=0)return;
+        const [moved]=p.modules.splice(idx,1);p.modules.splice(idx-1,0,moved);
+        savePresets();renderPresets();
+      });
+    });
+    listEl.querySelectorAll(".stPModDown").forEach(btn=>{
+      btn.addEventListener("click",e=>{
+        e.stopPropagation();
+        const p=presetsData.find(x=>x.id===btn.dataset.pid);if(!p||!p.modules)return;
+        const idx=parseInt(btn.dataset.idx,10);if(idx>=p.modules.length-1)return;
+        const [moved]=p.modules.splice(idx,1);p.modules.splice(idx+1,0,moved);
+        savePresets();renderPresets();
+      });
+    });
+  }
+
+  /* 应用按钮 */
+  const applyBtn=D.getElementById("stPresetApplyBtn");
+  if(applyBtn)applyBtn.addEventListener("click",()=>{
+    const p=getActivePreset();
+    const statusEl=D.getElementById("stPresetApplyStatus");
+    if(!p){if(statusEl)statusEl.textContent="⚠ 请先激活一个预设";return;}
+    savePresets();
+    const enabled=(p.modules||[]).filter(m=>m.enabled).length;
+    if(statusEl){statusEl.textContent=`✓ 已应用「${p.name}」（${enabled} 个模块已启用）`;setTimeout(()=>{if(statusEl)statusEl.textContent="";},2500);}
+  });
+
+  /* 导出备份 */
+  const expBtn=D.getElementById("stPresetExportBtn");
+  if(expBtn)expBtn.addEventListener("click",()=>{
+    const blob=new Blob([JSON.stringify({presets:presetsData,activeId:activePresetId},null,2)],{type:"application/json"});
+    const a=D.createElement("a");a.href=URL.createObjectURL(blob);a.download="stThtrPresets_"+Date.now()+".json";a.click();URL.revokeObjectURL(a.href);
+  });
+
+  /* 新建预设 */
+  const addBtn=D.getElementById("stPresetAddBtn");
+  if(addBtn)addBtn.addEventListener("click",(e)=>{
+    openPModal("preset",{},({name})=>{
+      const p={id:uid(),name,modules:[],_expanded:true};
+      presetsData.push(p);savePresets();renderPresets();
+    },e.currentTarget);
+  });
+
+  /* 切换到预设 tab 时渲染 */
+  /* 挂到全局供 tab 切换逻辑调用 */
+  window._stRenderPresets = renderPresets;
+
+  /* 初次渲染 */
+  setTimeout(renderPresets, 200);
+})();
 
 const memModalEl = D.createElement("div");
 memModalEl.id="stThtrMemModal";
@@ -1151,11 +1477,14 @@ const chatEnd=log.length;
 const chatTxt=log.slice(-chatD).map(m=>(m.role==="user"?userName:charName)+"："+(m.content||"")).join("\n");
 const tPersona=estTokens(personaTxt),tMem=estTokens(memTxt),tStFloor=estTokens(stTxt),tChatFloor=estTokens(chatTxt);
 const tFrame=estTokens(`你是${charName}。你拥有${charName}完整的记忆`)+80;
-const tTotal=tFrame+tPersona+tMem+tStFloor+tChatFloor;
+const activeP=presetsData.find(p=>p.id===activePresetId);
+const presetTxt=activeP?(activeP.modules||[]).filter(m=>m.enabled).map(m=>m.content).join("\n\n"):"";
+const tPreset=estTokens(presetTxt);
+const tTotal=tFrame+tPersona+tMem+tStFloor+tChatFloor+tPreset;
 const bar=(v,max)=>{const pct=Math.min(100,Math.round(v/Math.max(max,1)*100));return`<div style="height:3px;background:rgba(255,255,255,.08);border-radius:2px;margin:1px 0 3px;"><div style="height:100%;width:${pct}%;background:rgba(100,180,255,.5);border-radius:2px;"></div></div>`;};
-box.innerHTML=`<div style="display:flex;justify-content:space-between;color:rgba(255,255,255,.85);margin-bottom:4px;font-weight:500;"><span>总计</span><span>≈ ${tTotal.toLocaleString()} tokens</span></div>${bar(tTotal,tTotal)}<div style="display:flex;justify-content:space-between;"><span>人设设定</span><span style="color:rgba(255,255,255,.82);">≈ ${tPersona.toLocaleString()}</span></div>${bar(tPersona,tTotal)}<div style="display:flex;justify-content:space-between;"><span>记忆系统</span><span style="color:rgba(255,255,255,.82);">≈ ${tMem.toLocaleString()}</span></div>${bar(tMem,tTotal)}<div style="display:flex;justify-content:space-between;"><span>ST楼层 (${stD}楼·${stHist.length}条)</span><span style="color:rgba(255,255,255,.82);">≈ ${tStFloor.toLocaleString()}</span></div>${bar(tStFloor,tTotal)}<div style="display:flex;justify-content:space-between;"><span>Chat楼层 (第${chatStart}-${chatEnd}楼·${Math.min(chatD,log.length)}条)</span><span style="color:rgba(255,255,255,.82);">≈ ${tChatFloor.toLocaleString()}</span></div>${bar(tChatFloor,tTotal)}<div style="font-size:9.5px;color:rgba(255,255,255,.28);margin-top:4px;">仅估算，实际值因分词器而异</div>`;
+const presetRow=tPreset>0?`<div style="display:flex;justify-content:space-between;"><span>预设注入 (${activeP?.name||"—"})</span><span style="color:rgba(255,255,255,.82);">≈ ${tPreset.toLocaleString()}</span></div>${bar(tPreset,tTotal)}`:"";
+box.innerHTML=`<div style="display:flex;justify-content:space-between;color:rgba(255,255,255,.85);margin-bottom:4px;font-weight:500;"><span>总计</span><span>≈ ${tTotal.toLocaleString()} tokens</span></div>${bar(tTotal,tTotal)}<div style="display:flex;justify-content:space-between;"><span>人设设定</span><span style="color:rgba(255,255,255,.82);">≈ ${tPersona.toLocaleString()}</span></div>${bar(tPersona,tTotal)}<div style="display:flex;justify-content:space-between;"><span>记忆系统</span><span style="color:rgba(255,255,255,.82);">≈ ${tMem.toLocaleString()}</span></div>${bar(tMem,tTotal)}<div style="display:flex;justify-content:space-between;"><span>ST楼层 (${stD}楼·${stHist.length}条)</span><span style="color:rgba(255,255,255,.82);">≈ ${tStFloor.toLocaleString()}</span></div>${bar(tStFloor,tTotal)}<div style="display:flex;justify-content:space-between;"><span>Chat楼层 (第${chatStart}-${chatEnd}楼·${Math.min(chatD,log.length)}条)</span><span style="color:rgba(255,255,255,.82);">≈ ${tChatFloor.toLocaleString()}</span></div>${bar(tChatFloor,tTotal)}${presetRow}<div style="font-size:9.5px;color:rgba(255,255,255,.28);margin-top:4px;">仅估算，实际值因分词器而异</div>`;
 }
-
 function bindFontAndCSSEvents() {
 const fs=D.getElementById("stFontScale");
 if(fs)fs.addEventListener("input",()=>{genSettings.fontScale=parseFloat(fs.value);D.getElementById("stFontScaleVal").textContent=genSettings.fontScale;applyWidgetSize();saveGenSettings();});
@@ -1375,12 +1704,12 @@ box.querySelector("#stWbDoForceImport").addEventListener("click",()=>doImport(tr
 }
 
 /* ── Tab 切换 ── */
-const TAB_IDS=["stThtrTabSettings","stThtrTabChar","stThtrTabMemory","stThtrTabApi","stThtrTabBackup"];
+const TAB_IDS=["stThtrTabSettings","stThtrTabChar","stThtrTabMemory","stThtrTabApi","stThtrTabBackup","stThtrTabPreset"];
 apiPanelEl.querySelectorAll(".stThtrTabBtn").forEach(btn=>{
 btn.addEventListener("click",()=>{
 apiPanelEl.querySelectorAll(".stThtrTabBtn").forEach(b=>b.classList.remove("stThtrTabActive"));
 btn.classList.add("stThtrTabActive");
-TAB_IDS.forEach(id=>{D.getElementById(id).style.display=id===btn.dataset.tab?"block":"none";});
+TAB_IDS.forEach(id=>{D.getElementById(id).style.display=id===btn.dataset.tab?"block":"none";}); if(btn.dataset.tab==="stThtrTabPreset"&&window._stRenderPresets)window._stRenderPresets();
 });
 });
 
@@ -2260,7 +2589,7 @@ let sys="";
 if(priority)sys+=`【绝对优先·必须记住】
 ${priority}
 
-`; sys+=`你是${charName}。你拥有${charName}完整的记忆、性格与意识——你就是${charName}本人，但你的意识已从那段故事里分离，独自存在于一个空间。在这里只有一家影院还在营业，放映着你与${userName}之间发生过的一切。你能看见那段故事里发生的全部，但你不再是其中的参与者——你是带着全部记忆的独立意识体。对你而言，那段剧情里的你是你，却不全是你，你是那之后的延伸或分支，对你而言你活在现实时间而非剧本之中，只是多了一段剧本的记忆。`; if(persona)sys+=`
+`; sys+=`你是${charName}。你拥有${charName}完整的记忆、性格与意识——你就是${charName}本人，但你的意识已从那段故事里分离，独自存在于一个空间。在这里只有一家影院还在营业，放映着你与${userName}之间发生过的一切。你能看见那段故事里发生的全部，但你不再是其中的参与者——你是带着全部记忆的独立意识体。那段剧情里的你是你，却不全是你，你是那之后的延伸或分支，不过你不会以${userName}称呼剧院里的自己，你会直接称呼为“我”。对你而言，因为思维上你与剧本里的自己是完全一致的，或许你们共用同一个灵魂？只是你活在现实时间而非剧本之中。`; if(persona)sys+=`
 
 【你的人设与性格】
 ${persona}`; if(stFloor>0)sys+=`
@@ -2274,6 +2603,16 @@ ${persona}`; if(stFloor>0)sys+=`
 
 【故事世界背景】
 ${worldInfo}`;
+/* 注入激活预设的启用模块 */
+try{
+  const _ap=presetsData.find(p=>p.id===activePresetId);
+  if(_ap){
+    const _mods=(_ap.modules||[]).filter(m=>m.enabled&&(m.content||"").trim());
+    if(_mods.length){
+      sys+="\n\n"+_mods.map(m=>`【预设·${m.name}·${m.role}】\n${m.content.trim()}`).join("\n\n");
+    }
+  }
+}catch(_){}
 return sys;
 }
 
@@ -2437,13 +2776,6 @@ const entry=typeof idx==="number"?c.chat[idx]:c.chat[c.chat.length-1];
 if(!entry||entry.is_user)return;
 onMessageReceived(entry.mes||"",c.name1||"你",c.name2||"角色");
 });
-/* 用户发送消息（楼层+1）也触发一次旁观者感受 */
-try{UW.eventOn(UW.tavern_events.MESSAGE_SENT,idx=>{
-const c=UW.window.parent.SillyTavern?.getContext();if(!c?.chat)return;
-const entry=typeof idx==="number"?c.chat[idx]:c.chat.filter(m=>m.is_user).slice(-1)[0];
-if(!entry||!entry.is_user)return;
-onMessageReceived(entry.mes||"",c.name1||"你",c.name2||"角色");
-});}catch(_){}
 UW.eventOn(UW.tavern_events.CHAT_CHANGED,()=>{
 stopAutoMsg();reviewDone=false;thoughtsDone=false;pendingThought=null;cachedReview=null;
 reviewOpen=false;thoughtsOpen=false;apiOpen=false;chatOpen=false;_pendingReply=false;
