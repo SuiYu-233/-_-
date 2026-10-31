@@ -23,10 +23,27 @@
     { id: 'def_7', name: '茶汤', artist: '郁可唯', src: 'https://videotourl.com/audio/1793350751942-201476d0-b8d5-4ee7-bfd7-dbd1d752ec7c.m4a', lrc: '', offset: 0 },
     { id: 'def_8', name: '罗汉拳', artist: '阿萨Aza', src: 'https://videotourl.com/audio/1793351104195-e83eb7d2-8fa7-4602-a763-8c9a92b0a1b7.m4a', lrc: '', offset: 0 },
     { id: 'def_9', name: '下完这场雨', artist: '后弦', src: 'https://videotourl.com/audio/1793350873304-180d085c-1c4a-4f69-acce-9832dca5eb19.m4a', lrc: '', offset: 0 },
-    { id: 'def_10', name: '来春打马', artist: 'ILEM', src: 'https://videotourl.com/audio/1793324368692-5c80ff9d-3929-44ee-a2cc-357d29a458d2.m4a', lrc: '', offset: 0 }
+    { id: 'def_10', name: '来春打马', artist: 'ILEM', src: 'https://videotourl.com/audio/1793324368692-5c80ff9d-3929-44ee-a2cc-357d29a458d2.m4a', lrc: '', offset: 0 },
+    { id: 'def_11', name: '唐宋元明清', artist: '后弦', src: 'https://videotourl.com/audio/1793438718836-f13ef212-071f-4d03-8826-128ef58489c6.m4a', lrc: '', offset: 0 },
+{ id: 'def_12', name: '月光', artist: '胡彦斌', src: 'https://videotourl.com/audio/1793438877951-84202d94-334e-45ef-a244-d209595af9db.m4a', lrc: '', offset: 0 },
+{ id: 'def_13', name: '郑成功', artist: '后弦', src: 'https://videotourl.com/audio/1793439045758-328cf3cf-bdef-4727-9b40-30bb45aaea8b.m4a', lrc: '', offset: 0 },
+{ id: 'def_14', name: '对症下药', artist: '海鲜面/乐正绫', src: 'https://videotourl.com/audio/1793439123520-e7b3fc78-8e18-483f-bdfa-e6af3476b8b1.m4a', lrc: '', offset: 0 },
+{ id: 'def_15', name: '少林寺', artist: '后弦', src: 'https://videotourl.com/audio/1793439364185-362a2db8-6cf6-42cc-a4d3-8fe8839a3d24.m4a', lrc: '', offset: 0 }
   ];
 
   let TRACKS = [];
+
+  /* ── 从后台总曲库随机抽取指定数量（默认5首）不重复的歌曲 ── */
+  function getRandomDefaultTracks(count = 5) {
+    const pool = DEFAULT_TRACKS.map(item => ({ ...item }));
+    // 洗牌算法打乱顺序
+    for (let i = pool.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [pool[i], pool[j]] = [pool[j], pool[i]];
+    }
+    return pool.slice(0, Math.min(count, pool.length));
+  }
+
 
   /* ══════════════════════════════════════════
      本地永久存储系统 (IndexedDB + 桌面歌词配置)
@@ -1878,7 +1895,7 @@
         TRACKS.splice(i, 1);
 
         if (TRACKS.length === 0) {
-          TRACKS = DEFAULT_TRACKS.map(item => ({ ...item }));
+          TRACKS = getRandomDefaultTracks(5);
           saveTracksToDB();
           loadTrack(0, false);
           return;
@@ -2338,13 +2355,13 @@
   D.addEventListener('mouseup', () => { seekActive = false; });
   D.addEventListener('touchend', () => { seekActive = false; });
 
-  /* ── 启动时恢复歌单并自动识别歌词 ── */
+    /* ── 启动时恢复歌单并自动识别歌词 ── */
   (async function initPlayer() {
     const saved = await loadTracksFromDB();
     if (saved && saved.length > 0) {
       TRACKS = saved;
     } else {
-      TRACKS = DEFAULT_TRACKS.map(item => ({ ...item }));
+      TRACKS = getRandomDefaultTracks(5);
       await saveTracksToDB();
     }
     syncDesktopLyricState();
@@ -2352,3 +2369,4 @@
   })();
 
 })();
+
