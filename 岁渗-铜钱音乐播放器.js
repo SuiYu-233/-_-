@@ -2050,15 +2050,14 @@
     if (!file) return;
     const url = URL.createObjectURL(file);
     const rawName = file.name.replace(/\.[^/.]+$/, '');
-    let defArtist = '本地导入';
-    let defName = rawName;
-    if (rawName.includes('-')) {
-      const parts = rawName.split('-');
-      // 自动判断是“歌手 - 歌名”还是“歌名 - 歌手”
-      defName = parts[parts.length - 1].trim();
-      defArtist = parts.slice(0, parts.length - 1).join('/').trim();
-    }
-
+let defArtist = '本地导入';
+let defName = rawName;
+// 默认按「歌名 - 歌手」解析：第一个分隔符前为歌名，后面为歌手
+const sepMatch = rawName.match(/^(.+?)\s*[-–—_－]\s*(.+)$/);
+if (sepMatch) {
+  defName = sepMatch[1].trim();
+  defArtist = sepMatch[2].trim();
+}
     openEditModal('导入新歌曲（请确认歌名以便识别歌词）', defName, defArtist, async (finalName, finalArtist) => {
       const newTrack = {
         id: 'local_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
