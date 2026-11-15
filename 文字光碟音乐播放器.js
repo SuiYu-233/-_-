@@ -1393,7 +1393,7 @@
         D.getElementById('lg-search-go').addEventListener('click', doOnlineSearch);
         searchInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') doOnlineSearch(); });
 
-        /* ── 日夜切换 + getButtonEvent ── */
+        /* ── 日夜切换 + 修复酒馆「切换模式」按钮监听 ── */
         function toggleThemeMode(forceNight) {
             cfg.isNight = typeof forceNight === 'boolean' ? forceNight : !cfg.isNight;
             root.classList.toggle('lg-night', cfg.isNight);
@@ -1402,22 +1402,32 @@
             saveCfg();
         }
 
-        try {
-            const evOn = W.eventOn || window.eventOn;
-            const getBtnEv = W.getButtonEvent || window.getButtonEvent;
-            if (typeof evOn === 'function' && typeof getBtnEv === 'function') {
-                ['切换模式', '模式切换', '夜间模式', '日间模式'].forEach(btnName => {
-                    const evName = getBtnEv(btnName);
-                    if (evName) {
-                        evOn(evName, () => {
-                            if (btnName === '夜间模式') toggleThemeMode(true);
-                            else if (btnName === '日间模式') toggleThemeMode(false);
-                            else toggleThemeMode();
-                        });
+        // 通道 1：正确绑定酒馆助手 TavernHelper 的 eventOn(getButtonEvent('切换模式'))
+        function bindTavernModeBtn() {
+            try {
+                const evOn = (typeof eventOn === 'function' ? eventOn : null) || window.eventOn || W.eventOn;
+                const getBtnEv = (typeof getButtonEvent === 'function' ? getButtonEvent : null) || window.getButtonEvent || W.getButtonEvent;
+                if (typeof evOn === 'function' && typeof getBtnEv === 'function') {
+                    const evName = getBtnEv('切换模式');
+                    if (evName && !window.__lgModeEventBound) {
+                        window.__lgModeEventBound = true;
+                        evOn(evName, () => toggleThemeMode());
                     }
-                });
+                }
+            } catch (err) {}
+        }
+        bindTavernModeBtn();
+        // 延迟再绑一次，防止酒馆助手 API 晚于播放器加载
+        setTimeout(bindTavernModeBtn, 1500);
+        setTimeout(bindTavernModeBtn, 4000);
+
+        // 通道 2：全局 DOM 点击双保险（只要你在酒馆页面点击名字为「切换模式」的按钮，100% 响应）
+        D.addEventListener('click', (e) => {
+            const btn = e.target.closest('button, .qr--button, .menu_button, [role="button"], .mes_button');
+            if (btn && btn.textContent && btn.textContent.trim() === '切换模式') {
+                toggleThemeMode();
             }
-        } catch (err) {}
+        }, true);
 
         function fmt(s) {
             if (!isFinite(s) || s < 0) return '0:00';
