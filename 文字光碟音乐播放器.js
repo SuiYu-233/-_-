@@ -1294,27 +1294,21 @@
         }
         W.__lgDestroyPlayer = destroyPlayer;
 
-        // 绑定自动销毁监听器
+        // ★ 修复版：只监听真正的切换角色/切换聊天事件，不再监听沙盒 iframe 刷新，防止聊天中途突然消失！
         function setupAutoDestroyListeners() {
-            // 1. 如果脚本运行在酒馆的沙盒 iframe 内，当角色脚本被关闭或切换时，iframe 会触发 pagehide / unload
-            if (window !== W) {
-                const onFrameUnload = () => destroyPlayer();
-                window.addEventListener('pagehide', onFrameUnload);
-                window.addEventListener('unload', onFrameUnload);
-                cleanupCallbacks.push(() => {
-                    window.removeEventListener('pagehide', onFrameUnload);
-                    window.removeEventListener('unload', onFrameUnload);
-                });
-            }
-
-            // 2. 监听 SillyTavern 原生事件总线 (切换角色/聊天时触发)
+            // 1. 监听 SillyTavern 原生事件总线 (仅在真正切换角色/聊天时销毁)
             try {
                 const stContext = (typeof W.SillyTavern !== 'undefined' && W.SillyTavern.getContext)
                     ? W.SillyTavern.getContext()
                     : null;
                 const evSource = (stContext && stContext.eventSource) || W.eventSource;
                 if (evSource && typeof evSource.on === 'function') {
-                    const onChatChanged = () => destroyPlayer();
+                    // 记录当前所在的角色与聊天ID，只有真正发生变化时才卸载
+                    const initChatId = stContext ? stContext.chatId : null;
+                    const onChatChanged = (newChatId) => {
+                        if (initChatId && newChatId === initChatId) return;
+                        destroyPlayer();
+                    };
                     evSource.on('chat_id_changed', onChatChanged);
                     evSource.on('chatChanged', onChatChanged);
                     cleanupCallbacks.push(() => {
@@ -1323,16 +1317,6 @@
                             evSource.removeListener('chatChanged', onChatChanged);
                         }
                     });
-                }
-            } catch (e) {}
-
-            // 3. 兼容 TavernHelper (酒馆助手) 的事件监听
-            try {
-                const evOn = (typeof eventOn === 'function' ? eventOn : null) || window.eventOn || W.eventOn;
-                const tEvents = (typeof tavern_events !== 'undefined' ? tavern_events : null) || window.tavern_events || W.tavern_events;
-                if (typeof evOn === 'function') {
-                    const evName = (tEvents && tEvents.CHAT_CHANGED) ? tEvents.CHAT_CHANGED : 'chat_id_changed';
-                    evOn(evName, () => destroyPlayer());
                 }
             } catch (e) {}
         }
